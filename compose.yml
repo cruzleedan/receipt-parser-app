@@ -1,0 +1,50 @@
+services:
+  parser:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: receipt-parser-app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - rag-network
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./receipts:/app/receipts:ro
+      - ./output:/app/output
+    environment:
+      - OLLAMA_HOST=http://shared-ollama:11434
+      - OLLAMA_MODEL=llama3.2-gpu:latest
+      - OLLAMA_TIMEOUT=120
+      - OLLAMA_NUM_PREDICT=1024
+      - OLLAMA_TOP_P=0.8
+      - OCR_USE_GPU=false
+      - OCR_LANG=en
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+      - FLAGS_use_mkldnn=false
+      - FLAGS_use_onednn=false
+      - FLAGS_enable_pir_api=false
+      - CPU_NUM=4
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 4G
+        reservations:
+          memory: 2G
+    restart: unless-stopped
+
+networks:
+  rag-network:
+    external: true
+    name: shared-ollama-network
