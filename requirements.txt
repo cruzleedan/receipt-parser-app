@@ -4,6 +4,7 @@ paddlepaddle==3.2.0
 
 # LLM Client
 requests>=2.31.0
+google-genai>=1.0.0
 
 # Web Framework
 fastapi>=0.115.0

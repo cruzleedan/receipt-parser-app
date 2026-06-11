@@ -25,6 +25,7 @@ from src.models import (
 from src.config import settings
 from src.ocr_service import ReceiptOCRService
 from src.llm_service import OllamaLLMService
+from src.gemini_service import GeminiReceiptService
 from src.utils import load_image_from_bytes
 
 import sys
@@ -55,16 +56,29 @@ app = FastAPI(
 # Global service instances
 ocr_service: ReceiptOCRService = None
 llm_service: OllamaLLMService = None
+gemini_service: GeminiReceiptService = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
-    global ocr_service, llm_service
+    global ocr_service, llm_service, gemini_service
 
     logger.info("Starting Receipt Parser API...")
+    logger.info(f"Parser backend: {settings.parser_backend}")
 
-    # Initialize OCR service
+    # Initialize Gemini service (if configured) - used as primary backend
+    if settings.parser_backend == "gemini":
+        try:
+            gemini_service = GeminiReceiptService(
+                api_key=settings.gemini_api_key, model=settings.gemini_model
+            )
+            logger.info("Gemini service initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Gemini service: {e}")
+            gemini_service = None
+
+    # Initialize OCR service (used as fallback, or as primary when not using Gemini)
     try:
         ocr_service = ReceiptOCRService(use_gpu=settings.ocr_use_gpu)
         logger.info("OCR service initialized")
@@ -104,14 +118,26 @@ async def health():
         # Check LLM service
         llm_status = await llm_service.health_check()
 
+        services = {"ocr": ocr_status, "llm": llm_status}
+
         # Overall status
         overall_status = "healthy"
         if ocr_status.get("status") != "ready" or llm_status.get("status") != "connected":
             overall_status = "degraded"
 
+        # Check Gemini service (if configured as backend)
+        if settings.parser_backend == "gemini":
+            if gemini_service is not None:
+                gemini_status = await gemini_service.health_check()
+            else:
+                gemini_status = {"status": "error", "backend": "Gemini", "error": "not initialized"}
+            services["gemini"] = gemini_status
+            if gemini_status.get("status") != "connected":
+                overall_status = "degraded"
+
         return HealthResponse(
             status=overall_status,
-            services={"ocr": ocr_status, "llm": llm_status},
+            services=services,
             timestamp=datetime.utcnow().isoformat() + "Z",
         )
 
@@ -122,6 +148,88 @@ async def health():
             services={"error": str(e)},
             timestamp=datetime.utcnow().isoformat() + "Z",
         )
+
+
+async def _parse_with_paddleocr_ollama(
+    image, extraction_options: ExtractionOptions, start_time: float
+):
+    """
+    Run the PaddleOCR + Ollama pipeline.
+
+    Returns either a ReceiptResponse or a JSONResponse (for handled errors).
+    Raises HTTPException for unrecoverable errors.
+    """
+    # Stage 1: OCR extraction
+    ocr_start = time.time()
+    try:
+        ocr_result = ocr_service.extract_text(image)
+    except Exception as e:
+        logger.error(f"OCR extraction failed: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"OCR extraction failed: {str(e)}"
+        )
+    ocr_time_ms = (time.time() - ocr_start) * 1000
+
+    # Check if OCR found any text
+    if not ocr_result.full_text.strip():
+        return JSONResponse(
+            status_code=422,
+            content=ParseError(
+                error="No text detected",
+                details="OCR could not detect any text in the image",
+                ocr_confidence=ocr_result.confidence,
+            ).dict(),
+        )
+
+    # Stage 2: LLM structuring
+    llm_start = time.time()
+    try:
+        receipt_data = await llm_service.parse_receipt(ocr_result.full_text, extraction_options=extraction_options)
+    except Exception as e:
+        logger.error(f"LLM parsing failed: {e}")
+        return JSONResponse(
+            status_code=422,
+            content=ParseError(
+                error="LLM parsing failed",
+                details=str(e),
+                ocr_text=ocr_result.full_text[:500],  # First 500 chars
+                ocr_confidence=ocr_result.confidence,
+            ).dict(),
+        )
+    llm_time_ms = (time.time() - llm_start) * 1000
+
+    total_time_ms = (time.time() - start_time) * 1000
+
+    metadata = ProcessingMetadata(
+        ocr_time_ms=ocr_time_ms,
+        llm_time_ms=llm_time_ms,
+        total_time_ms=total_time_ms,
+        ocr_confidence=ocr_result.confidence,
+    )
+
+    return ReceiptResponse(**receipt_data.dict(), processing_metadata=metadata)
+
+
+async def _parse_with_gemini(
+    image, extraction_options: ExtractionOptions, start_time: float
+):
+    """
+    Run the Gemini single-stage pipeline.
+
+    Returns a ReceiptResponse on success, raises on failure (caller handles fallback).
+    """
+    receipt_data = await gemini_service.parse_receipt(image, extraction_options=extraction_options)
+
+    total_time_ms = (time.time() - start_time) * 1000
+
+    metadata = ProcessingMetadata(
+        ocr_time_ms=0.0,
+        llm_time_ms=total_time_ms,
+        total_time_ms=total_time_ms,
+        ocr_confidence=1.0,
+    )
+
+    return ReceiptResponse(**receipt_data.dict(), processing_metadata=metadata)
 
 
 @app.post("/parse")
@@ -180,11 +288,13 @@ async def parse_receipt(
     start_time = time.time()
 
     try:
-        print('Received /parse request', flush=True)
+        logger.info("Received /parse request")
         # Validate file type
-        if not file.content_type.startswith("image/"):
+        allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/tiff"}
+        if file.content_type not in allowed_types:
             raise HTTPException(
-                status_code=400, detail="File must be an image (JPG, PNG, etc.)"
+                status_code=400,
+                detail=f"Unsupported file type '{file.content_type}'. Accepted: JPEG, PNG, GIF, WebP, BMP, TIFF",
             )
 
         # Read image bytes
@@ -196,60 +306,22 @@ async def parse_receipt(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
-        # Stage 1: OCR extraction
-        ocr_start = time.time()
-        try:
-            ocr_result = ocr_service.extract_text(image)
-        except Exception as e:
-            logger.error(f"OCR extraction failed: {e}")
-            raise HTTPException(
-                status_code=500, detail=f"OCR extraction failed: {str(e)}"
-            )
-        ocr_time_ms = (time.time() - ocr_start) * 1000
+        # Try Gemini first if configured, falling back to PaddleOCR + Ollama on failure
+        response = None
+        if settings.parser_backend == "gemini" and gemini_service is not None:
+            try:
+                response = await _parse_with_gemini(image, extraction_options, start_time)
+                logger.info("Receipt parsed using Gemini backend")
+            except Exception as e:
+                logger.warning(f"Gemini parsing failed, falling back to PaddleOCR + Ollama: {e}")
 
-        # Check if OCR found any text
-        if not ocr_result.full_text.strip():
-            return JSONResponse(
-                status_code=422,
-                content=ParseError(
-                    error="No text detected",
-                    details="OCR could not detect any text in the image",
-                    ocr_confidence=ocr_result.confidence,
-                ).dict(),
-            )
+        if response is None:
+            response = await _parse_with_paddleocr_ollama(image, extraction_options, start_time)
+            if not isinstance(response, ReceiptResponse):
+                # Error response (JSONResponse) from the fallback pipeline
+                return response
 
-        # Stage 2: LLM structuring
-        llm_start = time.time()
-        try:
-            receipt_data = llm_service.parse_receipt(ocr_result.full_text, extraction_options=extraction_options)
-        except Exception as e:
-            logger.error(f"LLM parsing failed: {e}")
-            return JSONResponse(
-                status_code=422,
-                content=ParseError(
-                    error="LLM parsing failed",
-                    details=str(e),
-                    ocr_text=ocr_result.full_text[:500],  # First 500 chars
-                    ocr_confidence=ocr_result.confidence,
-                ).dict(),
-            )
-        llm_time_ms = (time.time() - llm_start) * 1000
-
-        # Calculate total time
         total_time_ms = (time.time() - start_time) * 1000
-
-        # Create metadata
-        metadata = ProcessingMetadata(
-            ocr_time_ms=ocr_time_ms,
-            llm_time_ms=llm_time_ms,
-            total_time_ms=total_time_ms,
-            ocr_confidence=ocr_result.confidence,
-        )
-
-        # Build response
-        response = ReceiptResponse(
-            **receipt_data.dict(), processing_metadata=metadata
-        )
 
         # Save to output directory (optional)
         try:
@@ -262,7 +334,8 @@ async def parse_receipt(
 
         logger.info(
             f"Receipt parsed successfully in {total_time_ms:.0f}ms "
-            f"(OCR: {ocr_time_ms:.0f}ms, LLM: {llm_time_ms:.0f}ms)"
+            f"(OCR: {response.processing_metadata.ocr_time_ms:.0f}ms, "
+            f"LLM: {response.processing_metadata.llm_time_ms:.0f}ms)"
         )
 
         return response
@@ -275,16 +348,46 @@ async def parse_receipt(
 
 
 @app.post("/parse-batch", response_model=BatchResponse)
-async def parse_batch(files: List[UploadFile] = File(...)):
+async def parse_batch(
+    files: List[UploadFile] = File(...),
+    items: bool = Query(True, description="Extract line items"),
+    date: bool = Query(True, description="Extract transaction date"),
+    time_field: bool = Query(True, alias="time", description="Extract transaction time"),
+    subtotal: bool = Query(True, description="Extract subtotal"),
+    tax: bool = Query(True, description="Extract tax amount"),
+    tip: bool = Query(False, description="Extract tip amount"),
+    discount: bool = Query(False, description="Extract discount amount"),
+    payment_method: bool = Query(False, description="Extract payment method"),
+    merchant_address: bool = Query(False, description="Extract merchant address"),
+    merchant_phone: bool = Query(False, description="Extract merchant phone"),
+    receipt_number: bool = Query(False, description="Extract receipt/transaction number"),
+    cashier: bool = Query(False, description="Extract cashier name"),
+):
     """
     Parse multiple receipt images.
 
     Args:
         files: List of receipt image files
+        (remaining params): Same field-selection query params as /parse
 
     Returns:
         BatchResponse with results for each receipt
     """
+    extraction_options = ExtractionOptions(
+        items=items,
+        date=date,
+        time=time_field,
+        subtotal=subtotal,
+        tax=tax,
+        tip=tip,
+        discount=discount,
+        payment_method=payment_method,
+        merchant_address=merchant_address,
+        merchant_phone=merchant_phone,
+        receipt_number=receipt_number,
+        cashier=cashier,
+    )
+
     start_time = time.time()
 
     # Validate batch size
@@ -300,9 +403,23 @@ async def parse_batch(files: List[UploadFile] = File(...)):
     successful = 0
     failed = 0
 
+    allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/tiff"}
+
     # Process each file
     for file in files:
         try:
+            # Validate file type
+            if file.content_type not in allowed_types:
+                results.append(
+                    BatchResult(
+                        filename=file.filename,
+                        success=False,
+                        error=f"Unsupported file type '{file.content_type}'",
+                    )
+                )
+                failed += 1
+                continue
+
             # Read image bytes
             image_bytes = await file.read()
 
@@ -348,7 +465,9 @@ async def parse_batch(files: List[UploadFile] = File(...)):
 
             # LLM parsing
             try:
-                receipt_data = llm_service.parse_receipt(ocr_result.full_text)
+                receipt_data = await llm_service.parse_receipt(
+                    ocr_result.full_text, extraction_options=extraction_options
+                )
                 results.append(
                     BatchResult(
                         filename=file.filename, success=True, data=receipt_data

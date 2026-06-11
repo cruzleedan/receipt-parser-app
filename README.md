@@ -1,25 +1,25 @@
 # Receipt Parser API
 
-A high-performance receipt parser using a two-stage architecture: **PaddleOCR** for text extraction and **Ollama** (Qwen2.5:7b) for structured JSON generation.
+A high-performance receipt parser using a two-stage architecture: **PaddleOCR** for text extraction and **Ollama** (llama3.2) for structured JSON generation.
 
 ## Features
 
 - **Two-stage pipeline**: OCR → LLM → JSON (optimized for speed and accuracy)
-- **PaddleOCR PP-OCRv4**: Best-in-class OCR with 15.84% character error rate
-- **Ollama + Qwen2.5**: Superior JSON generation with structured output
+- **PaddleOCR PP-OCRv4**: Best-in-class OCR with low character error rate
+- **Ollama + llama3.2**: Reliable JSON generation with structured output
 - **FastAPI**: Modern async web framework
-- **Docker Compose**: Easy deployment with two-container architecture
-- **Batch processing**: Process multiple receipts in parallel
-- **API compatible**: 100% compatible with existing receipt parser APIs
+- **Docker Compose**: Easy deployment with shared Ollama network
+- **Batch processing**: Process multiple receipts in one request
+- **Field selection**: Choose which fields to extract per request
 
 ## Performance
 
-| Metric | Target | Improvement |
-|--------|--------|-------------|
-| Processing Time | 2-3s | 2-3x faster than Qwen 2.5-VL |
-| Memory Usage | 4-6GB | 60% reduction |
-| Startup Time | 10-15s | 3x faster |
-| Container Size | 7GB | 60% smaller |
+| Metric | Value |
+|--------|-------|
+| Processing Time | 2-3s per receipt |
+| Memory Limit | 4GB (2GB reserved) |
+| CPU Limit | 4 cores |
+| Startup Time | ~60s (model warm-up) |
 
 ## Architecture
 
@@ -28,40 +28,34 @@ Receipt Image → PaddleOCR (OCR) → Structured Text → Ollama (LLM) → JSON 
 ```
 
 **Stage 1: Text Extraction (PaddleOCR)**
-- Image preprocessing (CLAHE, denoise, sharpen, binarization)
-- Spatial text organization (top-to-bottom, left-to-right)
-- Confidence filtering
-- Target: 0.5-1s processing time
+- Orientation/unwarping disabled for typical upright receipt images
+- Results returned in reading order (top-to-bottom, left-to-right)
+- Average confidence score reported per request
 
 **Stage 2: JSON Structuring (Ollama)**
-- Qwen2.5:7b model for structured data extraction
+- llama3.2 model via shared Ollama container
 - Temperature=0 for deterministic output
-- JSON schema enforcement
-- Target: 1-2s processing time
+- JSON mode enforced; markdown fallback extraction included
+- OCR text capped at 4000 chars before prompt injection
 
 ## Quick Start
 
 ### Prerequisites
 
 - Docker and Docker Compose
-- 8GB+ RAM recommended
-- 10GB+ disk space
+- External Docker networks: `shared-ollama-network` (shared with Ollama container)
+- 4GB+ RAM available for the container
 
 ### Installation
 
-1. Clone or download this repository
+1. Ensure the `shared-ollama-network` Docker network exists and Ollama is running on it with the `llama3.2-gpu:latest` model loaded.
 
-2. Run the quickstart script:
+2. Start the parser:
    ```bash
-   ./quickstart.sh
+   docker compose up -d
    ```
 
-   This will:
-   - Start Ollama and Parser services
-   - Pull the Qwen2.5:7b model (~4GB)
-   - Wait for services to be ready
-
-3. The API will be available at `http://localhost:8000`
+3. The API will be available at `http://localhost:8002` (external) / `http://receipt-parser-app:8000` (internal Docker network).
 
 ### Testing
 
@@ -93,7 +87,7 @@ python test_api.py receipts/ --batch
 Returns service information.
 
 ```bash
-curl http://localhost:8000/
+curl http://localhost:8002/
 ```
 
 **Response:**
@@ -110,7 +104,7 @@ curl http://localhost:8000/
 Health check endpoint.
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8002/health
 ```
 
 **Response:**
@@ -126,7 +120,7 @@ curl http://localhost:8000/health
     "llm": {
       "status": "connected",
       "backend": "Ollama",
-      "model": "qwen2.5:7b"
+      "model": "llama3.2-gpu:latest"
     }
   },
   "timestamp": "2026-01-25T10:30:00Z"
@@ -136,17 +130,43 @@ curl http://localhost:8000/health
 #### POST /parse
 Parse a single receipt image.
 
+**Accepted file types:** JPEG, PNG, GIF, WebP, BMP, TIFF
+
 ```bash
 curl -X POST -F "file=@receipts/receipt-image.jpg" \
-  http://localhost:8000/parse
+  http://localhost:8002/parse
+```
+
+**Field-selection query parameters** (all optional):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `items` | `true` | Extract line items |
+| `date` | `true` | Extract transaction date |
+| `time` | `true` | Extract transaction time |
+| `subtotal` | `true` | Extract subtotal |
+| `tax` | `true` | Extract tax amount |
+| `tip` | `false` | Extract tip/gratuity |
+| `discount` | `false` | Extract discount amount |
+| `payment_method` | `false` | Extract payment method |
+| `merchant_address` | `false` | Extract merchant address |
+| `merchant_phone` | `false` | Extract merchant phone |
+| `receipt_number` | `false` | Extract receipt/transaction number |
+| `cashier` | `false` | Extract cashier name |
+
+Example with extra fields:
+```bash
+curl -X POST \
+  "http://localhost:8002/parse?tip=true&payment_method=true&receipt_number=true" \
+  -F "file=@receipts/receipt-image.jpg"
 ```
 
 **Response:**
 ```json
 {
   "merchant_name": "Corner Store",
-  "merchant_address": "123 Main St, City, ST 12345",
-  "merchant_phone": "+1-555-0100",
+  "merchant_address": null,
+  "merchant_phone": null,
   "date": "2026-01-25",
   "time": "14:30",
   "items": [
@@ -159,11 +179,13 @@ curl -X POST -F "file=@receipts/receipt-image.jpg" \
   ],
   "subtotal": 8.99,
   "tax": 0.72,
+  "tip": null,
+  "discount": null,
   "total": 9.71,
-  "payment_method": "card",
-  "card_last_4": "1234",
-  "receipt_number": "TXN-12345",
-  "cashier": "John D.",
+  "payment_method": null,
+  "card_last_4": null,
+  "receipt_number": null,
+  "cashier": null,
   "processing_metadata": {
     "ocr_time_ms": 850,
     "llm_time_ms": 1200,
@@ -174,13 +196,13 @@ curl -X POST -F "file=@receipts/receipt-image.jpg" \
 ```
 
 #### POST /parse-batch
-Parse multiple receipts in one request.
+Parse multiple receipts in one request. Supports the same field-selection query parameters as `/parse`.
 
 ```bash
 curl -X POST \
+  "http://localhost:8002/parse-batch?tip=true" \
   -F "files=@receipts/receipt1.jpg" \
-  -F "files=@receipts/receipt2.jpg" \
-  http://localhost:8000/parse-batch
+  -F "files=@receipts/receipt2.jpg"
 ```
 
 **Response:**
@@ -190,47 +212,45 @@ curl -X POST \
     {
       "filename": "receipt1.jpg",
       "success": true,
-      "data": { /* receipt JSON */ }
+      "data": { }
     },
     {
       "filename": "receipt2.jpg",
-      "success": true,
-      "data": { /* receipt JSON */ }
+      "success": false,
+      "error": "No text detected"
     }
   ],
   "total": 2,
-  "successful": 2,
-  "failed": 0,
+  "successful": 1,
+  "failed": 1,
   "processing_time_ms": 4200
 }
 ```
 
 ## Configuration
 
-Configuration is managed through environment variables. Copy `.env.example` to `.env` and customize:
+Copy `.env.example` to `.env` and customize. The most important variables:
 
 ```bash
 # OCR Configuration
-OCR_USE_GPU=false                  # Enable GPU acceleration
+OCR_USE_GPU=false                  # true to enable GPU acceleration for both OCR and LLM
 OCR_LANG=en                        # Language (en, multilingual, etc.)
-OCR_DET_THRESH=0.3                 # Detection threshold
-OCR_USE_ANGLE_CLS=true             # Handle rotated receipts
 
 # Ollama Configuration
-OLLAMA_HOST=http://localhost:11434
-OLLAMA_MODEL=qwen2.5:7b            # Model name
-OLLAMA_TIMEOUT=30                  # Request timeout (seconds)
-OLLAMA_TEMPERATURE=0.0             # Deterministic output
+OLLAMA_HOST=http://shared-ollama:11434
+OLLAMA_MODEL=llama3.2-gpu:latest   # Model name — must be pulled in Ollama
+OLLAMA_TIMEOUT=120                 # Request timeout (seconds)
 
 # API Configuration
 API_HOST=0.0.0.0
 API_PORT=8000
-API_WORKERS=1                      # Number of workers
+API_WORKERS=1
 
 # Performance
-BATCH_MAX_SIZE=10                  # Max batch size
-MAX_IMAGE_SIZE=4096                # Max image dimension
+BATCH_MAX_SIZE=10                  # Max receipts per batch request
 ```
+
+> **Note:** `OCR_USE_GPU` controls GPU acceleration for both PaddleOCR and the Ollama LLM call (`num_gpu`). Set to `false` for CPU-only deployments.
 
 ## Development
 
@@ -241,13 +261,19 @@ MAX_IMAGE_SIZE=4096                # Max image dimension
    pip install -r requirements.txt
    ```
 
-2. Start Ollama separately:
+2. Start Ollama separately and pull the model:
    ```bash
    ollama serve
-   ollama pull qwen2.5:7b
+   ollama pull llama3.2-gpu:latest
    ```
 
-3. Run the API:
+3. Copy and edit config:
+   ```bash
+   cp .env.example .env
+   # Set OLLAMA_HOST=http://localhost:11434
+   ```
+
+4. Run the API:
    ```bash
    uvicorn src.main:app --reload
    ```
@@ -257,22 +283,19 @@ MAX_IMAGE_SIZE=4096                # Max image dimension
 ```
 receipt-parser-app/
 ├── src/
-│   ├── main.py              # FastAPI application
+│   ├── main.py              # FastAPI application and endpoints
 │   ├── ocr_service.py       # PaddleOCR wrapper
-│   ├── llm_service.py       # Ollama client
+│   ├── llm_service.py       # Ollama client (async)
 │   ├── models.py            # Pydantic schemas
-│   ├── config.py            # Configuration
-│   └── utils.py             # Image preprocessing
-├── tests/
-│   └── fixtures/            # Test receipts
+│   ├── config.py            # Configuration via pydantic-settings
+│   └── utils.py             # Image loading utilities
 ├── docker/
-│   ├── Dockerfile           # Parser service
-│   └── docker-compose.yml   # Orchestration
-├── receipts/                # Input directory
+│   └── Dockerfile           # Parser service image
+├── receipts/                # Input directory (mounted read-only)
 ├── output/                  # Output JSON files
+├── compose.yml              # Docker Compose (connects to shared-ollama-network)
 ├── requirements.txt
 ├── .env.example
-├── quickstart.sh
 └── test_api.py
 ```
 
@@ -280,23 +303,22 @@ receipt-parser-app/
 
 **Start services:**
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 **View logs:**
 ```bash
-docker-compose logs -f parser    # Parser service logs
-docker-compose logs -f ollama    # Ollama service logs
+docker compose logs -f parser
 ```
 
 **Stop services:**
 ```bash
-docker-compose down
+docker compose down
 ```
 
 **Rebuild after code changes:**
 ```bash
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 **Access container shell:**
@@ -306,68 +328,45 @@ docker exec -it receipt-parser-app bash
 
 ## Troubleshooting
 
-### Services won't start
+### Service won't start
 
 Check logs:
 ```bash
-docker-compose logs parser
-docker-compose logs ollama
+docker compose logs parser
 ```
 
 ### Ollama model not found
 
-Pull the model manually:
+Pull the model in your Ollama container:
 ```bash
-docker exec receipt-ollama ollama pull qwen2.5:7b
+docker exec <ollama-container> ollama pull llama3.2-gpu:latest
 ```
 
 ### Out of memory
 
-Reduce resource limits in `docker-compose.yml` or use a smaller model:
+Reduce resource limits in `compose.yml` or use a smaller model:
 ```bash
-OLLAMA_MODEL=qwen2.5:3b  # Faster, uses less memory
+OLLAMA_MODEL=llama3.2:1b
 ```
 
 ### Slow parsing
 
-- Enable GPU acceleration (set `OCR_USE_GPU=true`)
-- Use a smaller Ollama model (`qwen2.5:3b`)
-- Reduce `MAX_IMAGE_SIZE` for faster OCR
-- Increase `API_WORKERS` for concurrent requests
+- Enable GPU acceleration: `OCR_USE_GPU=true`
+- Use a smaller Ollama model
+- Verify Ollama `keep_alive` is keeping the model loaded between requests
 
 ### Low accuracy
 
 - Use higher quality images (clear, well-lit)
-- Adjust `OCR_DET_THRESH` (lower = detect more text)
 - Try multilingual OCR: `OCR_LANG=multilingual`
-- Use a larger Ollama model for better parsing
+- Use a larger Ollama model for better JSON extraction
 
-## Comparison with Original
+## Integration with expense-api
 
-| Feature | Original (Qwen 2.5-VL) | New (PaddleOCR + Ollama) |
-|---------|----------------------|--------------------------|
-| Architecture | Vision-Language Model | Two-stage (OCR + LLM) |
-| Model Size | 15GB | 7GB total |
-| Memory Usage | 12-15GB | 4-6GB |
-| Processing Time | 5-10s | 2-3s |
-| Startup Time | 30-60s | 10-15s |
-| Dependencies | PyTorch, CUDA, Transformers | PaddleOCR, Ollama |
-| GPU Required | Recommended | Optional |
+expense-api calls `/parse` with `multipart/form-data`. The parser is reached at `http://receipt-parser-app:8000` via the shared Docker network. Both services must be on `shared-ollama-network`.
+
+Supported MIME types from expense-api: `image/jpeg`, `image/png`, `image/gif`, `image/webp`. PDF receipts are not supported by the parser — they will be rejected with HTTP 400.
 
 ## License
 
 See LICENSE file for details.
-
-## Contributing
-
-Contributions welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Submit a pull request
-
-## Support
-
-For issues or questions:
-- Check the troubleshooting section
-- Review logs: `docker-compose logs`
-- Open an issue on the repository

@@ -14,6 +14,8 @@ services:
     volumes:
       - ./receipts:/app/receipts:ro
       - ./output:/app/output
+    env_file:
+      - .env
     environment:
       - OLLAMA_HOST=http://shared-ollama:11434
       - OLLAMA_MODEL=llama3.2-gpu:latest

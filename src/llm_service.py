@@ -2,6 +2,7 @@
 LLM Service using Ollama for structured JSON extraction from OCR text.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -12,6 +13,8 @@ import requests
 
 from src.models import ReceiptData, ExtractionOptions
 from src.config import settings
+
+OCR_TEXT_MAX_CHARS = 4000
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +44,7 @@ class OllamaLLMService:
 
         logger.info(f"Initialized Ollama client (host: {self.host}, model: {self.model})")
 
-    def parse_receipt(
+    async def parse_receipt(
         self,
         ocr_text: str,
         max_retries: int = 3,
@@ -63,6 +66,13 @@ class OllamaLLMService:
         """
         if extraction_options is None:
             extraction_options = ExtractionOptions()
+
+        # Cap input to prevent context overflow and prompt injection surface
+        if len(ocr_text) > OCR_TEXT_MAX_CHARS:
+            logger.warning(
+                f"OCR text truncated from {len(ocr_text)} to {OCR_TEXT_MAX_CHARS} chars"
+            )
+            ocr_text = ocr_text[:OCR_TEXT_MAX_CHARS]
 
         start_time = time.time()
 
@@ -86,8 +96,7 @@ class OllamaLLMService:
                     logger.error(f"LLM parsing failed after {max_retries} attempts")
                     raise RuntimeError(f"LLM parsing failed: {str(e)}")
 
-                # Exponential backoff
-                time.sleep(2**attempt)
+                await asyncio.sleep(2**attempt)
 
     async def health_check(self) -> Dict[str, Any]:
         """
@@ -231,13 +240,13 @@ JSON:"""
                 "format": "json",
                 "keep_alive": "10m",  # Keep model loaded
                 "options": {
-                    "temperature": 0,  # Deterministic for consistent JSON
+                    "temperature": 0,
                     "top_p": 0.9,
-                    "num_predict": 768,  # Reduced from 1024 - sufficient for receipts
-                    "num_ctx": 1536,  # Reduced context - preprocessed text is smaller
-                    "num_thread": 20,  # Use more CPU cores (system has 24)
-                    "num_batch": 512,  # Larger batch size for faster processing
-                    "num_gpu": 0,      # Explicit CPU-only mode
+                    "num_predict": 768,
+                    "num_ctx": 1536,
+                    "num_thread": 20,
+                    "num_batch": 512,
+                    "num_gpu": 99 if settings.ocr_use_gpu else 0,
                 },
             }
 

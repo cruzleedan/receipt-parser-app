@@ -8,6 +8,16 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application configuration with environment variable support."""
 
+    # Parser Backend Selection
+    # "gemini": use Gemini vision API (falls back to paddleocr_ollama on failure)
+    # "paddleocr_ollama": use PaddleOCR + Ollama only
+    parser_backend: str = "paddleocr_ollama"
+
+    # Gemini Configuration
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash"
+    gemini_timeout: int = 60
+
     # OCR Configuration
     ocr_use_gpu: bool = True
     ocr_lang: str = "en"
