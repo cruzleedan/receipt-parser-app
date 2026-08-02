@@ -80,7 +80,8 @@ docker compose -f compose.yml up -d --build
 
 ## Context
 
-Architectural decisions and proposals live in `context/work/` (currently
-empty — no decisions recorded yet). Release conventions are in
+Architectural decisions and proposals live in `context/work/` (see
+`context/work/0001-paddleocr-ollama-two-stage-pipeline.md` for why the
+two-stage OCR→LLM architecture was chosen). Release conventions are in
 `context/RELEASING.md`. Log framework friction (not code bugs) in
 `context/friction.md`.
