@@ -41,10 +41,12 @@ receipt-parser-app/
 
 ## Networks
 
-- Joins `rag-network` and the default network
+- Joins the external Docker network `shared-ollama-network` and the default network.
+  `rag-network` is the local Compose key; `name: shared-ollama-network` selects
+  the actual shared network.
 - Accesses Ollama at `http://shared-ollama:11434` (set via `OLLAMA_HOST` env var)
-- **Note:** Uses `rag-network`, not `shared-ollama-network` — verify the network
-  name matches the ollama-service compose config before deploying
+- Start `ollama-service` or run the homelab bootstrap script to create the shared
+  network before starting the parser.
 
 ---
 
