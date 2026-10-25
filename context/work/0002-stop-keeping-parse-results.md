@@ -1,7 +1,7 @@
 ---
 id: 0002
 title: "Stop keeping parse results on disk"
-status: accepted
+status: shipped
 kind: fix
 opened: 2026-10-25
 decided: 2026-10-25
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-10-25 |
-| **Status** | accepted |
+| **Status** | shipped |
 | **Kind** | fix |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -45,16 +45,20 @@ Do not write parse results to disk by default. Keep the code path behind `SAVE_O
 
 ## Definition of done
 
-- [ ] Output writing off unless SAVE_OUTPUT=true; test
-- [ ] Existing production files deleted
-- [ ] Log limits in compose
-- [ ] Redeployed; /app/output stays empty after a parse
+- [x] Output writing off unless SAVE_OUTPUT=true; test
+- [x] Existing production files deleted
+- [x] Log limits in compose
+- [x] Redeployed; /app/output stays empty after a parse
 
 ## Log
 
 <!-- Append-only. One line per status change or notable event. This is the
      audit trail — do not rewrite past entries. -->
 - 2026-10-25 accepted — gap found answering the Expense app's privacy questions (mailbox [410]).
+- 2026-10-25 shipped — rebuilt and recreated (owner: deploy); logs capped
+  (10 MB x 5); a parse of `receipts/receipt-image.jpg` answered 200 and wrote
+  nothing; the 42 old `receipt_*.json` files deleted from `output/`. (No
+  automated test suite exists in this repo; checked by hand.)
 
 ---
 
