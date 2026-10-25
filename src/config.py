@@ -41,6 +41,8 @@ class Settings(BaseSettings):
 
     # Paths
     output_dir: str = "/app/output"
+    # WORK-0002: parse results are not kept by default; true only for local debugging.
+    save_output: bool = False
 
     class Config:
         env_file = ".env"

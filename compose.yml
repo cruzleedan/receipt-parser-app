@@ -45,6 +45,12 @@ services:
         reservations:
           memory: 2G
     restart: unless-stopped
+    # WORK-0002 / expense-api WORK-0057: bounded logs (about 50 MB).
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 networks:
   rag-network:

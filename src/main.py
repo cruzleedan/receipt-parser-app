@@ -96,8 +96,9 @@ async def startup_event():
         logger.error(f"Failed to initialize LLM service: {e}")
         raise
 
-    # Create output directory if it doesn't exist
-    Path(settings.output_dir).mkdir(parents=True, exist_ok=True)
+    # Create output directory if parse results are kept (WORK-0002)
+    if settings.save_output:
+        Path(settings.output_dir).mkdir(parents=True, exist_ok=True)
 
     logger.info("Receipt Parser API started successfully")
 
@@ -323,14 +324,15 @@ async def parse_receipt(
 
         total_time_ms = (time.time() - start_time) * 1000
 
-        # Save to output directory (optional)
-        try:
-            output_path = Path(settings.output_dir) / f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            with open(output_path, "w") as f:
-                json.dump(response.dict(), f, indent=2)
-            logger.info(f"Saved result to {output_path}")
-        except Exception as e:
-            logger.warning(f"Failed to save output: {e}")
+        # WORK-0002: keep a copy only when debugging locally (SAVE_OUTPUT=true).
+        if settings.save_output:
+            try:
+                output_path = Path(settings.output_dir) / f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                with open(output_path, "w") as f:
+                    json.dump(response.dict(), f, indent=2)
+                logger.info(f"Saved result to {output_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save output: {e}")
 
         logger.info(
             f"Receipt parsed successfully in {total_time_ms:.0f}ms "

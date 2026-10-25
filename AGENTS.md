@@ -31,7 +31,7 @@ receipt-parser-app/
 ├── docker/
 │   └── Dockerfile
 ├── receipts/               # Input receipts (read-only mount)
-├── output/                 # Parsed output files
+├── output/                 # Parse results, only with SAVE_OUTPUT=true (debugging)
 ├── tests/
 ├── compose.yml
 └── requirements.txt
@@ -76,7 +76,7 @@ docker compose -f compose.yml up -d --build
 - [ ] Backend selection controlled via `PARSER_BACKEND` env var (not hardcoded)
 - [ ] `OLLAMA_HOST` read from environment
 - [ ] New parser backends follow the fallback pattern (see `gemini_service.py`)
-- [ ] Output written to `output/` directory
+- [ ] No parse results kept on disk unless `SAVE_OUTPUT=true` (local debugging only, WORK-0002)
 
 ---
 
