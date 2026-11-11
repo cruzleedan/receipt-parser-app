@@ -1,7 +1,7 @@
 ---
 id: 0005
 title: "One deadline per parse, and parsing off the event loop"
-status: building
+status: shipped
 kind: fix
 opened: 2026-11-11
 decided: 2026-11-11
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-11-11 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | fix |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -55,7 +55,7 @@ Measured 2026-11-11 on d3: Gemini 7.7 s; local fallback 11–30 s; two Gemini 50
 
 - [x] Deadline, Gemini timeout, reserve rule and 504 implemented; blocking calls in threads
 - [x] `pytest` passes in the image
-- [ ] Deployed on d3; a real parse succeeds and `/health` answers during a parse
+- [x] Deployed on d3; a real parse succeeds and `/health` answers during a parse
 
 ## Log
 
@@ -64,6 +64,8 @@ Measured 2026-11-11 on d3: Gemini 7.7 s; local fallback 11–30 s; two Gemini 50
 - 2026-11-11 building — owner asked for work items for the review's findings and to build, merge and deploy them to production (with expense-api WORK-0072/0073).
 - 2026-11-11 implemented and verified — `PARSE_DEADLINE_SECONDS` 70 (504), `GEMINI_TIMEOUT` 20 applied through `HttpOptions`, `FALLBACK_RESERVE_SECONDS` 35, Ollama bounded by the time left, OCR and Ollama in threads. `tests/test_parse_deadline.py`: 6 passed in the rebuilt image (504 within 2 s, `/health` under 1 s during a 1.5 s blocking OCR, Gemini skipped inside the reserve, attempts bounded, no Ollama call after the deadline).
 - 2026-11-11 regression on deploy — passing `HttpOptions` made the Gemini SDK use API `v1`, which rejects JSON mode (400 INVALID_ARGUMENT), so parses fell back to the local pipeline (still 200). The pre-deploy image had already been replaced by the test rebuild, so no rollback image. Fixed forward: `api_version="v1beta"` set explicitly, test asserts it; a real Gemini call from the rebuilt image returned the receipt.
+- 2026-11-11 deployed — `receipt-parser-app` rebuilt from `dc50f6c` and recreated, healthy. Live: Gemini answered (sample receipt, 22.6 s with a retry); with Gemini 503s the local fallback finished in 15.8–34.4 s, inside the deadline; `/health` answered 200 in 13 ms during a parse.
+- 2026-11-11 shipped — deployed; expense-api WORK-0073 relies on it.
 
 ---
 
