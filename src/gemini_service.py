@@ -37,10 +37,11 @@ class GeminiReceiptService:
 
         # WORK-0005: GEMINI_TIMEOUT now applies (the SDK takes milliseconds).
         self.timeout_seconds = settings.gemini_timeout
-        self.client = genai.Client(
-            api_key=self.api_key,
-            http_options=types.HttpOptions(timeout=int(self.timeout_seconds * 1000)),
+        # Setting http_options drops the SDK's default v1beta; JSON mode needs v1beta.
+        self.http_options = types.HttpOptions(
+            api_version="v1beta", timeout=int(self.timeout_seconds * 1000)
         )
+        self.client = genai.Client(api_key=self.api_key, http_options=self.http_options)
 
         logger.info(f"Initialized Gemini client (model: {self.model})")
 
