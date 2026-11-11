@@ -114,3 +114,6 @@ def test_gemini_timeout_reaches_the_client(monkeypatch):
     monkeypatch.setattr(settings, "gemini_timeout", 7)
     service = GeminiReceiptService(api_key="test-key", model="stub")
     assert service.timeout_seconds == 7
+    assert service.http_options.timeout == 7000
+    # JSON mode (response_mime_type) is only accepted on v1beta.
+    assert service.http_options.api_version == "v1beta"

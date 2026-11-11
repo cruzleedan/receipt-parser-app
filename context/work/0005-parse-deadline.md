@@ -63,6 +63,7 @@ Measured 2026-11-11 on d3: Gemini 7.7 s; local fallback 11–30 s; two Gemini 50
      audit trail — do not rewrite past entries. -->
 - 2026-11-11 building — owner asked for work items for the review's findings and to build, merge and deploy them to production (with expense-api WORK-0072/0073).
 - 2026-11-11 implemented and verified — `PARSE_DEADLINE_SECONDS` 70 (504), `GEMINI_TIMEOUT` 20 applied through `HttpOptions`, `FALLBACK_RESERVE_SECONDS` 35, Ollama bounded by the time left, OCR and Ollama in threads. `tests/test_parse_deadline.py`: 6 passed in the rebuilt image (504 within 2 s, `/health` under 1 s during a 1.5 s blocking OCR, Gemini skipped inside the reserve, attempts bounded, no Ollama call after the deadline).
+- 2026-11-11 regression on deploy — passing `HttpOptions` made the Gemini SDK use API `v1`, which rejects JSON mode (400 INVALID_ARGUMENT), so parses fell back to the local pipeline (still 200). The pre-deploy image had already been replaced by the test rebuild, so no rollback image. Fixed forward: `api_version="v1beta"` set explicitly, test asserts it; a real Gemini call from the rebuilt image returned the receipt.
 
 ---
 
