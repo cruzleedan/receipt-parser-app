@@ -2,6 +2,7 @@
 FastAPI application for receipt parsing using PaddleOCR + Ollama.
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime
@@ -152,7 +153,7 @@ async def health():
 
 
 async def _parse_with_paddleocr_ollama(
-    image, extraction_options: ExtractionOptions, start_time: float
+    image, extraction_options: ExtractionOptions, start_time: float, deadline: float | None = None
 ):
     """
     Run the PaddleOCR + Ollama pipeline.
@@ -163,7 +164,8 @@ async def _parse_with_paddleocr_ollama(
     # Stage 1: OCR extraction
     ocr_start = time.time()
     try:
-        ocr_result = ocr_service.extract_text(image)
+        # WORK-0005: CPU-bound OCR runs in a thread so /health stays responsive.
+        ocr_result = await asyncio.to_thread(ocr_service.extract_text, image)
     except Exception as e:
         logger.error(f"OCR extraction failed: {e}")
         raise HTTPException(
@@ -185,7 +187,11 @@ async def _parse_with_paddleocr_ollama(
     # Stage 2: LLM structuring
     llm_start = time.time()
     try:
-        receipt_data = await llm_service.parse_receipt(ocr_result.full_text, extraction_options=extraction_options)
+        receipt_data = await llm_service.parse_receipt(
+            ocr_result.full_text, extraction_options=extraction_options, deadline=deadline
+        )
+    except TimeoutError:
+        raise
     except Exception as e:
         logger.error(f"LLM parsing failed: {e}")
         return JSONResponse(
@@ -212,14 +218,19 @@ async def _parse_with_paddleocr_ollama(
 
 
 async def _parse_with_gemini(
-    image, extraction_options: ExtractionOptions, start_time: float
+    image, extraction_options: ExtractionOptions, start_time: float, deadline: float | None = None
 ):
     """
     Run the Gemini single-stage pipeline.
 
     Returns a ReceiptResponse on success, raises on failure (caller handles fallback).
     """
-    receipt_data = await gemini_service.parse_receipt(image, extraction_options=extraction_options)
+    receipt_data = await gemini_service.parse_receipt(
+        image,
+        extraction_options=extraction_options,
+        deadline=deadline,
+        reserve_seconds=settings.fallback_reserve_seconds,
+    )
 
     total_time_ms = (time.time() - start_time) * 1000
 
@@ -231,6 +242,18 @@ async def _parse_with_gemini(
     )
 
     return ReceiptResponse(**receipt_data.dict(), processing_metadata=metadata)
+
+
+async def _run_backends(image, extraction_options: ExtractionOptions, start_time: float, deadline: float):
+    """Gemini first if configured, then PaddleOCR + Ollama, all before `deadline`."""
+    if settings.parser_backend == "gemini" and gemini_service is not None:
+        try:
+            response = await _parse_with_gemini(image, extraction_options, start_time, deadline)
+            logger.info("Receipt parsed using Gemini backend")
+            return response
+        except Exception as e:
+            logger.warning(f"Gemini parsing failed, falling back to PaddleOCR + Ollama: {e}")
+    return await _parse_with_paddleocr_ollama(image, extraction_options, start_time, deadline)
 
 
 @app.post("/parse")
@@ -307,20 +330,25 @@ async def parse_receipt(
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
 
-        # Try Gemini first if configured, falling back to PaddleOCR + Ollama on failure
-        response = None
-        if settings.parser_backend == "gemini" and gemini_service is not None:
-            try:
-                response = await _parse_with_gemini(image, extraction_options, start_time)
-                logger.info("Receipt parsed using Gemini backend")
-            except Exception as e:
-                logger.warning(f"Gemini parsing failed, falling back to PaddleOCR + Ollama: {e}")
-
-        if response is None:
-            response = await _parse_with_paddleocr_ollama(image, extraction_options, start_time)
-            if not isinstance(response, ReceiptResponse):
-                # Error response (JSONResponse) from the fallback pipeline
-                return response
+        # WORK-0005: one deadline for the whole parse, Gemini plus the local fallback.
+        deadline = time.monotonic() + settings.parse_deadline_seconds
+        try:
+            response = await asyncio.wait_for(
+                _run_backends(image, extraction_options, start_time, deadline),
+                timeout=settings.parse_deadline_seconds,
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            logger.warning(f"Parse deadline of {settings.parse_deadline_seconds:.0f}s exceeded")
+            return JSONResponse(
+                status_code=504,
+                content=ParseError(
+                    error="Parse deadline exceeded",
+                    details=f"No result within {settings.parse_deadline_seconds:.0f} seconds",
+                ).dict(),
+            )
+        if not isinstance(response, ReceiptResponse):
+            # Error response (JSONResponse) from the fallback pipeline
+            return response
 
         total_time_ms = (time.time() - start_time) * 1000
 
@@ -441,7 +469,7 @@ async def parse_batch(
 
             # OCR extraction
             try:
-                ocr_result = ocr_service.extract_text(image)
+                ocr_result = await asyncio.to_thread(ocr_service.extract_text, image)
             except Exception as e:
                 results.append(
                     BatchResult(

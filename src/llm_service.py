@@ -49,6 +49,7 @@ class OllamaLLMService:
         ocr_text: str,
         max_retries: int = 3,
         extraction_options: ExtractionOptions = None,
+        deadline: float | None = None,
     ) -> ReceiptData:
         """
         Parse OCR text into structured receipt data.
@@ -79,7 +80,13 @@ class OllamaLLMService:
         for attempt in range(max_retries):
             try:
                 prompt = self._build_prompt(ocr_text, extraction_options)
-                response = self._call_ollama(prompt)
+                # WORK-0005: bounded by the time left, and off the event loop.
+                timeout = float(settings.ollama_timeout)
+                if deadline is not None:
+                    timeout = min(timeout, deadline - time.monotonic())
+                    if timeout < 1:
+                        raise TimeoutError("parse deadline reached before the Ollama call")
+                response = await asyncio.to_thread(self._call_ollama, prompt, timeout)
                 receipt_data = self._parse_response(response)
 
                 elapsed_ms = (time.time() - start_time) * 1000
@@ -87,6 +94,8 @@ class OllamaLLMService:
 
                 return receipt_data
 
+            except TimeoutError:
+                raise
             except Exception as e:
                 logger.warning(
                     f"LLM parsing attempt {attempt + 1}/{max_retries} failed: {e}"
@@ -219,7 +228,7 @@ IMPORTANT: Only extract information that is actually present in the text. Use nu
 
 JSON:"""
 
-    def _call_ollama(self, prompt: str) -> str:
+    def _call_ollama(self, prompt: str, timeout: float | None = None) -> str:
         """
         Call Ollama API to generate response.
 
@@ -251,7 +260,7 @@ JSON:"""
             }
 
             response = requests.post(
-                self.api_url, json=payload, timeout=settings.ollama_timeout
+                self.api_url, json=payload, timeout=timeout or settings.ollama_timeout
             )
             response.raise_for_status()
 

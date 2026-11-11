@@ -35,7 +35,12 @@ class GeminiReceiptService:
         if not self.api_key:
             raise ValueError("Gemini API key is not configured")
 
-        self.client = genai.Client(api_key=self.api_key)
+        # WORK-0005: GEMINI_TIMEOUT now applies (the SDK takes milliseconds).
+        self.timeout_seconds = settings.gemini_timeout
+        self.client = genai.Client(
+            api_key=self.api_key,
+            http_options=types.HttpOptions(timeout=int(self.timeout_seconds * 1000)),
+        )
 
         logger.info(f"Initialized Gemini client (model: {self.model})")
 
@@ -44,6 +49,8 @@ class GeminiReceiptService:
         image: Image.Image,
         max_retries: int = 2,
         extraction_options: ExtractionOptions = None,
+        deadline: float | None = None,
+        reserve_seconds: float = 0.0,
     ) -> ReceiptData:
         """
         Parse a receipt image into structured data using Gemini.
@@ -52,6 +59,8 @@ class GeminiReceiptService:
             image: PIL Image object
             max_retries: Maximum number of retry attempts
             extraction_options: Options controlling which fields to extract
+            deadline: time.monotonic() value by which the whole parse must end
+            reserve_seconds: time to leave before the deadline for the fallback
 
         Returns:
             ReceiptData object
@@ -68,9 +77,15 @@ class GeminiReceiptService:
         last_error: Exception | None = None
 
         for attempt in range(max_retries):
+            budget = self.timeout_seconds
+            if deadline is not None:
+                budget = min(budget, deadline - time.monotonic() - reserve_seconds)
+                if budget < 1:
+                    logger.warning("Gemini skipped: not enough time left before the fallback reserve")
+                    break
             try:
-                response_text = await asyncio.to_thread(
-                    self._call_gemini, prompt, image_bytes
+                response_text = await asyncio.wait_for(
+                    asyncio.to_thread(self._call_gemini, prompt, image_bytes), timeout=budget
                 )
                 return self._parse_response(response_text)
             except Exception as e:
@@ -81,6 +96,8 @@ class GeminiReceiptService:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2**attempt)
 
+        if last_error is None:
+            raise RuntimeError("Gemini parsing skipped: parse deadline too close")
         logger.error(f"Gemini parsing failed after {max_retries} attempts")
         raise RuntimeError(f"Gemini parsing failed: {str(last_error)}")
 
