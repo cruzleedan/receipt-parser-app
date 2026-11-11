@@ -16,7 +16,14 @@ class Settings(BaseSettings):
     # Gemini Configuration
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
-    gemini_timeout: int = 60
+    # WORK-0005: per-attempt HTTP timeout (seconds); Gemini is tried only while at least
+    # fallback_reserve_seconds of the parse deadline remain for the local pipeline.
+    gemini_timeout: int = 20
+    fallback_reserve_seconds: float = 35
+
+    # WORK-0005: the whole /parse request ends by this deadline (504). Innermost layer of
+    # expense-api WORK-0073: parser 70 s < API 80 s < web 90 s < Cloudflare 100 s.
+    parse_deadline_seconds: float = 70
 
     # OCR Configuration
     ocr_use_gpu: bool = True
