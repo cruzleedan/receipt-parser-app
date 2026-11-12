@@ -1,10 +1,10 @@
 ---
 id: 0011
 title: "Collect confirmed receipt corrections, then fine-tune the parser model"
-status: proposed
+status: building
 kind: feature
 opened: 2026-11-12
-decided: ~
+decided: 2026-11-12
 branch: ~
 supersedes: ~
 superseded-by: ~
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-11-12 |
-| **Status** | proposed |
+| **Status** | building |
 | **Kind** | feature |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -51,8 +51,8 @@ Skip stage 2 if WORK-0010 finds a published receipt-tuned model that is good eno
 
 ## Definition of done
 
-- [ ] Consent and retention decided with the owner
-- [ ] Corrections captured (API, web, Flutter)
+- [x] Consent and retention decided with the owner
+- [ ] Corrections captured (API, web, Flutter) — API and web done 2026-11-12; Flutter handed over ([698])
 - [ ] Fine-tune trained, served and scored against the owner's labels
 
 ## Log
@@ -60,6 +60,7 @@ Skip stage 2 if WORK-0010 finds a published receipt-tuned model that is good eno
 <!-- Append-only. One line per status change or notable event. This is the
      audit trail — do not rewrite past entries. -->
 - 2026-11-12 proposed — owner asked whether the model can be trained over time.
+- 2026-11-12 building — owner's decisions: opt-in asked once with nothing pre-selected (after declining a pre-ticked box on the legal note), kept while the account exists, consent text mentions rented-server training. Stage 1 shipped as expense-api WORK-0079 and expense-tracker WORK-0030: corrections are not stored separately; pairs are built at export time from saved, receipt-linked lines of consenting users (`npm run training:export-receipts`). Stage 2 (fine-tune) waits for several hundred samples.
 
 ---
 
