@@ -1,7 +1,7 @@
 ---
 id: 0016
 title: "Report how sure the model was of the total and date"
-status: building
+status: shipped
 kind: feature
 opened: 2026-11-13
 decided: 2026-11-13
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-11-13 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | feature |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -46,7 +46,7 @@ The vision-model call asks Ollama for `logprobs`; `field_confidence(tokens)` ret
 ## Definition of done
 
 - [x] `field_confidence` in the response; tests
-- [ ] Deployed; live parse shows it
+- [x] Deployed; live parse shows it
 
 ## Log
 
@@ -54,6 +54,7 @@ The vision-model call asks Ollama for `logprobs`; `field_confidence(tokens)` ret
      audit trail — do not rewrite past entries. -->
 - 2026-11-13 building — from spike WORK-0015; owner: "proceed with next item you suggested".
 - 2026-11-13 implemented — `logprobs: true` with the JSON schema; `_chat` returns the tokens with the content; `field_confidence` in `ReceiptData`/`ReceiptResponse`. pytest 48 passed, 4 skipped (new: the least sure digit per field, ignoring punctuation; the parse response carries it and the request asks for logprobs).
+- 2026-11-13 shipped — owner: "deploy it". Parser rebuilt from `7106bfa` (rollback `receipt-parser-app-parser:rollback-pre-0016-202611130019`); `verify-deployment.sh` 4 passed; live parse of the public sample by the vision model in 11.5 s with field_confidence date 0.997, total 0.994.
 
 ---
 
