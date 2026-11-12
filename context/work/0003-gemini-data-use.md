@@ -57,6 +57,7 @@ Production runs with `PARSER_BACKEND=gemini` and model `gemini-2.5-flash`: the r
      audit trail — do not rewrite past entries. -->
 - 2026-10-25 accepted — owner: free Gemini key now, paid models soon.
 - 2026-11-11 note — the free tier allows only 20 requests a day for gemini-2.5-flash (429 `GenerateRequestsPerDayPerProjectPerModel-FreeTier`); past that, parses fall back to the local pipeline. WORK-0008 proposes a local primary backend instead.
+- 2026-11-12 superseded in practice — WORK-0008 moved production parsing to a model on d3; no receipt images go to Gemini. The paid-tier step is no longer needed while that holds.
 
 ---
 

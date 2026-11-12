@@ -1,7 +1,7 @@
 ---
 id: 0008
 title: "Local vision-model backend (Qwen3.5-4B) as the primary parser"
-status: building
+status: shipped
 kind: feature
 opened: 2026-11-11
 decided: 2026-11-12
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-11-11 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | feature |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -43,7 +43,7 @@ See WORK-0006.
 ## Definition of done
 
 - [x] Backend, tests and deployment; benchmark rerun through the parser
-- [ ] Privacy and retention wording updated if Gemini is removed
+- [x] Privacy and retention wording updated if Gemini is removed
 
 ## Log
 
@@ -55,6 +55,8 @@ See WORK-0006.
 - 2026-11-12 prompt results (owner's 58 labels; total / date / merchant / all three): baseline prompt 76/55/88/36%; date-as-printed + total rule 86/60/93/50%; the same without the example date (the model had copied it into an answer) 84/71/91/57%. NuExtract3 (WORK-0010) 81/47/91/38% at best: Qwen3.5-4B kept. Bench date scoring now uses the parser's own `src/dates.py`.
 - 2026-11-12 implemented and verified — `vlm_ollama` backend (`src/vlm_service.py`, `src/dates.py`), month-first date normalisation, answer cleaning (no total → fallback; fractional quantities → 1), `parser-ollama` container (Ollama 0.40.12, Vulkan on the 890M) in `compose.yml`. `pytest`: 28 passed. End to end through the parser on the labelled receipts: 84/64/90/48%, 59 of 60 answered by the vision model (1 fell back: no total), median 16.1 s, p90 38.9 s, max 54.9 s, inside the 70 s deadline.
 - 2026-11-12 deploy regression — `VLM_KEEP_ALIVE=-1` reached Ollama as the string "-1" (400 "missing unit in duration"), so every production parse fell back to the local pipeline (still 200). Tests had stubbed the Ollama call. No rollback image existed (the old image's layers had been cleaned up); fixed forward: numeric values are sent as numbers, with a test.
+- 2026-11-12 production deployed — owner's go ("proceed with your recommended changes"). `parser-ollama` (Vulkan on the 890M, qwen3.5:4b pulled, kept loaded) and `receipt-parser-app` rebuilt from `7240bc1` after the keep_alive fix. Live: three parses answered by the vision model in 10.7–34.4 s on 100% GPU, no fallbacks; `/health` 200 in 11 ms during a parse; a parse from the expense-api container through the parser succeeded (10.7 s). Rollback: rebuild `9b9f9a7`.
+- 2026-11-12 shipped — production parses no longer go to Gemini; retention text changed in expense-api WORK-0077; Flutter dev asked to update the app's privacy policy ([697]).
 
 ---
 
