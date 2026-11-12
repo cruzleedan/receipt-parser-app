@@ -1,7 +1,7 @@
 ---
 id: 0014
 title: "Read the currency from receipts"
-status: building
+status: shipped
 kind: feature
 opened: 2026-11-12
 decided: 2026-11-12
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-11-12 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | feature |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -46,7 +46,7 @@ Proposed: add `currency` (ISO 4217, null when not printed) to the vision prompt 
 ## Definition of done
 
 - [x] Field in prompt, schema and response; scored on the labelled receipts; expense-api and web use it
-- [ ] Deployed (the parser is shared by production and the demo)
+- [x] Deployed (the parser is shared by production and the demo)
 
 ## Log
 
@@ -56,6 +56,8 @@ Proposed: add `currency` (ISO 4217, null when not printed) to the vision prompt 
 - 2026-11-12 building — owner: "proceed to next work item you recommend".
 - 2026-11-12 implemented — the vision prompt and schema ask for `currency` as an ISO 4217 code ("PHP for ₱, P or PHP, USD only for US$ or USD; null when no currency is printed"); `src/currency.py` keeps only known codes, maps unambiguous symbols (₱, a lone P, US$, €, …) and turns a bare $ or ¥ into null. `ReceiptData`/`ReceiptResponse.currency` (null from the OCR fallback). pytest 46 passed, 4 skipped. expense-api stores it in `receipts.extracted_currency`, returns it in the review suggestion and fills an untouched draft's currency (no database change; parser client `transformResponse` now passes it; PostgreSQL test added, 17 suites pass); expense-tracker uses it in the review and drops "check it" when it was read.
 - 2026-11-12 scored on the owner's labelled receipts (WORK-0009; 50 ran, the runner's default limit; 49 labelled), same receipts before/after: total 84→82% (one receipt), date 65→65%, merchant 88→88%, all three 47→45%; currency PHP 42, null 8, wrong 0; median 17.8 s (was 16.8), max 57.0 s, all answered by the vision model. Aggregates only; outputs stay in `~/receipt-bench`.
+- 2026-11-12 shipped — owner: "deploy it". Parser rebuilt from `79c83e4` (rollback `receipt-parser-app-parser:rollback-pre-0014-202611122335`), `verify-deployment.sh` 4 passed; a live parse of the public sample answered by the vision model in 11.0 s with currency null (none printed). expense-api and expense-tracker to the demo (live draft check passed, its line and receipt deleted by exact id) and production (backup `~/expense-backups/2026-11-12-1538`, dump 201269 bytes; rollback tags `rollback-pre-0014-202611122337`; healthy; `verify:deployment` OK; parser daily check exit 0).
+- 2026-11-12 incident during the deploy (not caused by it) — at 15:38 UTC cloudflared lost all four tunnel connections ("no recent network activity", after DNS failures earlier that night) and stopped retrying; every public hostname answered 530 until the owner restarted it (no sudo for the agent). After the restart all hostnames returned 200.
 
 ---
 
