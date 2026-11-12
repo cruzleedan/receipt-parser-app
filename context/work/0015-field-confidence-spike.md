@@ -1,7 +1,7 @@
 ---
 id: 0015
 title: "Spike: which read fields to flag for a second look"
-status: building
+status: shipped
 kind: spike
 opened: 2026-11-12
 decided: 2026-11-12
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-11-12 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | spike |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -47,14 +47,16 @@ Research only. Measure, on the owner's labelled receipts and only as aggregates,
 
 ## Definition of done
 
-- [ ] Each signal's flag rate and how many wrong fields it catches, on the labelled receipts
-- [ ] Recommendation: which signal, which threshold, or none
+- [x] Each signal's flag rate and how many wrong fields it catches, on the labelled receipts
+- [x] Recommendation: which signal, which threshold, or none
 
 ## Log
 
 <!-- Append-only. One line per status change or notable event. This is the
      audit trail — do not rewrite past entries. -->
 - 2026-11-12 building — owner: "proceed with next item you suggested" (expense-api IDEA-0012). Cheap signals on the 49 labelled reads of the WORK-0014 run: arithmetic flagged 5, 2 wrong (catches 2 of 9 wrong totals; unflagged 7 of 44 wrong); day/month ambiguity flagged 12, 3 wrong (unflagged 14 of 37 wrong): not useful. Wrong dates are mostly misread digits (month 5, day 2, year 2, missing 3, swapped 1, other 2); wrong totals 5 too high, 4 too low. Ollama 0.40.12 returns per-token `logprobs` with the JSON-schema format (checked on the public sample).
+- 2026-11-13 results — the production prompt and schema with `logprobs` on the bench Ollama over the 60 labelled images (58 labelled readable; outputs kept in `~/receipt-bench/runs-0015`). Signal: the lowest probability of any digit token inside the field's value. Total (9 wrong): < 0.5 flags 5 (4 wrong, catches 4/9); < 0.7 flags 11 (8 wrong, catches 8/9; 1 wrong among 47 not flagged); < 0.9 flags 18 (8 wrong); < 0.95 flags 20 (catches 9/9). Date (21 wrong): < 0.5 flags 8 (8 wrong); < 0.7 flags 13 (11 wrong, catches 11/21); < 0.8 flags 18 (12 wrong, catches 12/21); < 0.9 flags 27 (15 wrong). Cost: none measurable (model call median 16.2 s, max 58.8 s, against 17.8/57.0 end to end without).
+- 2026-11-13 recommendation — use token probabilities, not arithmetic or date-shape checks. Parser returns the lowest digit probability per field; the API marks the total below 0.7 and the date below 0.8 as "check"; the review highlights them and "Confirm all ready" skips them. Thresholds from 58 receipts: keep them in configuration and re-measure as labels grow. The cash-tendered check is not needed for now (the probability already catches 8 of 9 wrong totals).
 
 ---
 
