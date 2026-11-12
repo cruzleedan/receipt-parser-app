@@ -73,6 +73,8 @@ docker run --rm -v "$PWD/tests:/app/tests:ro" -v "$PWD/pytest.ini:/app/pytest.in
 # after every deploy, and before one against a candidate container on the same network
 scripts/verify-deployment.sh                                   # production
 scripts/verify-deployment.sh http://parser-candidate:8000     # a candidate
+# Daily from cron at 06:30 (WORK-0013): scripts/daily-check.sh, log ~/receipt-parser-checks/check.log,
+# Healthchecks ping when ~/.config/receipt-parser-check.env has PING_URL
 ```
 
 ---
