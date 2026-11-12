@@ -29,7 +29,11 @@ def num(v):
     return None
 
 
-def iso_date(v):
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from src.dates import normalise_date  # noqa: E402  (the parser's own date reading, WORK-0008)
+
+
+def _old_iso_date(v):
     if not isinstance(v, str):
         return None
     m = re.search(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", v)
@@ -44,6 +48,10 @@ def iso_date(v):
             mo, d = d, mo
         return f"{y:04d}-{mo:02d}-{d:02d}"
     return None
+
+
+def iso_date(v):
+    return normalise_date(v)
 
 
 def merchant(v):
