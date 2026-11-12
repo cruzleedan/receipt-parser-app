@@ -39,6 +39,7 @@ separate DoD to maintain; if the checklist is wrong, fix it on the work item.
 
 - [ ] All Definition of done boxes checked
 - [ ] Deployed, per the project's `AGENTS.md` deploy command
+- [ ] `scripts/verify-deployment.sh` passes against production (WORK-0012)
 - [ ] `scripts/verify-context.sh` passes
 - [ ] Log entry added: `- YYYY-MM-DD shipped — <one line>`
 
