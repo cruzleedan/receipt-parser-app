@@ -24,6 +24,7 @@ from PIL import Image
 from src.config import settings
 from src.models import ExtractionOptions, ReceiptData
 from src.utils import normalise_date
+from src.currency import normalise_currency
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,11 @@ TOTAL_RULE = (
 MERCHANT_RULE = "merchant_name is the store or business name at the top, not the address or the operator company."
 # No example date: models copied the example into answers (WORK-0008).
 DATE_RULE = "date is the transaction date copied exactly as printed on the receipt, including the year; do not reorder or convert it."
+# WORK-0014: the code, not the symbol; a bare "$" is ambiguous and is cleaned to null in code.
+CURRENCY_RULE = (
+    "currency is the ISO 4217 code of the amounts, from a symbol or code printed on the receipt: PHP for ₱, P or PHP, "
+    "USD only for US$ or USD; null when no currency is printed."
+)
 
 NUMBER = {"type": ["number", "null"]}
 TEXT = {"type": ["string", "null"]}
@@ -50,6 +56,7 @@ FIELDS = {
     "tip": ("tip", NUMBER, "number"),
     "discount": ("discount", NUMBER, "number"),
     "total": (None, NUMBER, "number"),
+    "currency": (None, TEXT, "verbatim-string"),
     "payment_method": ("payment_method", TEXT, "verbatim-string"),
     "card_last_4": ("payment_method", TEXT, "verbatim-string"),
     "receipt_number": ("receipt_number", TEXT, "verbatim-string"),
@@ -87,7 +94,7 @@ def generic_prompt(options: ExtractionOptions) -> str:
     fields = wanted_fields(options) + (["items (each: name, quantity, unit_price, total_price)"] if options.items else [])
     return (
         "Read this receipt and return its data as JSON with these fields: " + ", ".join(fields) + ".\n"
-        f"- {MERCHANT_RULE}\n- {DATE_RULE}\n- {TOTAL_RULE}\n"
+        f"- {MERCHANT_RULE}\n- {DATE_RULE}\n- {TOTAL_RULE}\n- {CURRENCY_RULE}\n"
         "Copy amounts as plain numbers without currency symbols. Use null for anything not printed. "
         "Return only the JSON."
     )
@@ -116,6 +123,7 @@ def to_receipt(data: Dict[str, Any]) -> ReceiptData:
     clean["merchant_name"] = (data.get("merchant_name") or "").strip() or "Unknown"
     clean["date"] = normalise_date(data.get("date"))
     clean["total"] = float(total)
+    clean["currency"] = normalise_currency(data.get("currency"))
     for k in ("subtotal", "tax", "tip", "discount"):
         if k in clean and not isinstance(clean[k], (int, float)):
             clean[k] = None

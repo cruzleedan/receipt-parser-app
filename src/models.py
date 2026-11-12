@@ -56,6 +56,7 @@ class ReceiptData(BaseModel):
     tip: Optional[float] = Field(default=None, description="Tip amount")
     discount: Optional[float] = Field(default=None, description="Discount amount")
     total: float = Field(..., description="Total amount paid")
+    currency: Optional[str] = Field(default=None, description="ISO 4217 code of the amounts when printed (WORK-0014)")
 
     payment_method: Optional[str] = Field(default=None, description="Payment method (cash/card/etc)")
     card_last_4: Optional[str] = Field(default=None, description="Last 4 digits of card if visible")
@@ -87,6 +88,7 @@ class ReceiptResponse(BaseModel):
     tip: Optional[float] = None
     discount: Optional[float] = None
     total: float
+    currency: Optional[str] = None
     payment_method: Optional[str] = None
     card_last_4: Optional[str] = None
     receipt_number: Optional[str] = None

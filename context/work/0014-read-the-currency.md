@@ -1,11 +1,11 @@
 ---
 id: 0014
 title: "Read the currency from receipts"
-status: proposed
+status: building
 kind: feature
 opened: 2026-11-12
-decided: ~
-branch: ~
+decided: 2026-11-12
+branch: feat/0014-read-currency
 supersedes: ~
 superseded-by: ~
 ---
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-11-12 |
-| **Status** | proposed |
+| **Status** | building |
 | **Kind** | feature |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -45,13 +45,17 @@ Proposed: add `currency` (ISO 4217, null when not printed) to the vision prompt 
 
 ## Definition of done
 
-- [ ] Field in prompt, schema and response; scored on the labelled receipts; expense-api and web use it
+- [x] Field in prompt, schema and response; scored on the labelled receipts; expense-api and web use it
+- [ ] Deployed (the parser is shared by production and the demo)
 
 ## Log
 
 <!-- Append-only. One line per status change or notable event. This is the
      audit trail — do not rewrite past entries. -->
 - 2026-11-12 proposed — found while checking expense-tracker WORK-0034 (a peso receipt defaulted to USD).
+- 2026-11-12 building — owner: "proceed to next work item you recommend".
+- 2026-11-12 implemented — the vision prompt and schema ask for `currency` as an ISO 4217 code ("PHP for ₱, P or PHP, USD only for US$ or USD; null when no currency is printed"); `src/currency.py` keeps only known codes, maps unambiguous symbols (₱, a lone P, US$, €, …) and turns a bare $ or ¥ into null. `ReceiptData`/`ReceiptResponse.currency` (null from the OCR fallback). pytest 46 passed, 4 skipped. expense-api stores it in `receipts.extracted_currency`, returns it in the review suggestion and fills an untouched draft's currency (no database change; parser client `transformResponse` now passes it; PostgreSQL test added, 17 suites pass); expense-tracker uses it in the review and drops "check it" when it was read.
+- 2026-11-12 scored on the owner's labelled receipts (WORK-0009; 50 ran, the runner's default limit; 49 labelled), same receipts before/after: total 84→82% (one receipt), date 65→65%, merchant 88→88%, all three 47→45%; currency PHP 42, null 8, wrong 0; median 17.8 s (was 16.8), max 57.0 s, all answered by the vision model. Aggregates only; outputs stay in `~/receipt-bench`.
 
 ---
 
