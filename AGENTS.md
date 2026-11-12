@@ -65,6 +65,14 @@ docker logs -f receipt-parser-app
 
 # Rebuild after code changes
 docker compose -f compose.yml up -d --build
+
+# Unit tests (stubbed backends), in the image
+docker run --rm -v "$PWD/tests:/app/tests:ro" -v "$PWD/pytest.ini:/app/pytest.ini:ro" --entrypoint python receipt-parser-app-parser -m pytest -q
+
+# Integration check against a running parser and its real model (WORK-0012):
+# after every deploy, and before one against a candidate container on the same network
+scripts/verify-deployment.sh                                   # production
+scripts/verify-deployment.sh http://parser-candidate:8000     # a candidate
 ```
 
 ---
