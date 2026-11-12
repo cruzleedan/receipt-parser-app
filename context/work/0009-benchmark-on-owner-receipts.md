@@ -1,7 +1,7 @@
 ---
 id: 0009
 title: "Spike: rerun the WORK-0006 benchmark on the owner's own receipts"
-status: building
+status: shipped
 kind: spike
 opened: 2026-11-12
 decided: 2026-11-12
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-11-12 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | spike |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -91,7 +91,7 @@ Unchanged: Qwen3.5-4B as the local primary backend (WORK-0008), with the date ta
 - [x] All candidates run; unlabelled scores recorded
 - [x] Owner-labelled sample scored
 - [x] Recommendation for WORK-0008 confirmed or changed
-- [ ] Images deleted from d3 (or kept on the owner's request)
+- [x] Images deleted from d3 (or kept on the owner's request)
 
 ## Log
 
@@ -99,6 +99,7 @@ Unchanged: Qwen3.5-4B as the local primary backend (WORK-0008), with the date ta
      audit trail — do not rewrite past entries. -->
 - 2026-11-12 building — owner offered about 400 receipt photos for a rerun; some are friends'.
 - 2026-11-12 run — 465 photos unpacked; 155 run through five local candidates; owner labelled 60 (2 unreadable). Results above. The agent viewed 18 photos while debugging duplicate detection, which sent them to Anthropic's API; disclosed to the owner and stopped.
+- 2026-11-12 shipped — owner asked to keep the photos, model answers and labels in `/home/dan/receipt-bench/` (mode 700) for re-scoring WORK-0008; delete them when WORK-0008 ships unless the owner says otherwise.
 
 ---
 
