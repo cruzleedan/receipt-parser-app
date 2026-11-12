@@ -1,7 +1,7 @@
 ---
 id: 0013
 title: "Daily integration check of the production parser, with a Healthchecks ping"
-status: building
+status: shipped
 kind: infra
 opened: 2026-11-12
 decided: 2026-11-12
@@ -15,7 +15,7 @@ superseded-by: ~
 | | |
 |---|---|
 | **Opened** | 2026-11-12 |
-| **Status** | building |
+| **Status** | shipped |
 | **Kind** | infra |
 | **Supersedes** | — |
 | **Superseded by** | — |
@@ -47,7 +47,7 @@ Parser regressions fail quietly: a broken vision model still answers 200 through
 ## Definition of done
 
 - [x] Script and cron entry; success and failure paths checked
-- [ ] Owner adds the Healthchecks check and `PING_URL`; one success ping seen
+- [x] Owner adds the Healthchecks check and `PING_URL`; one success ping seen
 
 ## Log
 
@@ -55,6 +55,7 @@ Parser regressions fail quietly: a broken vision model still answers 200 through
      audit trail — do not rewrite past entries. -->
 - 2026-11-12 building — owner approved ("proceed") the recommendation to run the parser check daily.
 - 2026-11-12 verified — against production: `exit=0 4 passed` logged; against a missing host (separate log): `exit=1 4 failed` with the errors below it. Cron line `30 6 * * * …/scripts/daily-check.sh` added to the owner's crontab. No `PING_URL` yet.
+- 2026-11-12 shipped — owner created the Healthchecks check (daily, grace 3 h) and `~/.config/receipt-parser-check.env` (mode 600). Success ping sent; a deliberate failure (missing host, separate log) pinged `/fail` and the owner received the email; a passing run restored the check.
 
 ---
 
