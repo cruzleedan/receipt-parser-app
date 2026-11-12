@@ -12,7 +12,8 @@ import src.main as main
 from src.config import settings
 from src.models import ExtractionOptions
 from src.utils import normalise_date
-from src.vlm_service import VisionLLMService, json_schema, keep_alive, nuextract_template, to_receipt
+from src.vlm_service import VisionLLMService, generic_prompt, json_schema, keep_alive, nuextract_template, to_receipt
+from src.currency import normalise_currency
 
 
 @pytest.mark.parametrize("raw, iso", [
@@ -57,7 +58,7 @@ def test_an_answer_without_a_numeric_total_is_rejected(bad):
 def test_every_schema_key_is_required_and_follows_the_options():
     schema = json_schema(ExtractionOptions())
     assert set(schema["required"]) == set(schema["properties"])
-    assert {"merchant_name", "date", "total", "items", "subtotal", "tax"} <= set(schema["properties"])
+    assert {"merchant_name", "date", "total", "items", "subtotal", "tax", "currency"} <= set(schema["properties"])
     assert "cashier" not in schema["properties"]
     with_cashier = json_schema(ExtractionOptions(cashier=True, payment_method=True))
     assert {"cashier", "payment_method", "card_last_4"} <= set(with_cashier["properties"])
@@ -159,3 +160,20 @@ def test_keep_alive_numbers_are_sent_as_numbers():
         assert svc._payload(Image.new("RGB", (10, 10)), ExtractionOptions())["keep_alive"] == -1
     finally:
         vs.settings.vlm_keep_alive = old
+
+
+# WORK-0014: the currency comes back as an ISO code, or null when missing, unknown or ambiguous.
+@pytest.mark.parametrize("raw, code", [
+    ("PHP", "PHP"), ("php", "PHP"), ("₱", "PHP"), ("P", "PHP"), (" Peso ", "PHP"),
+    ("USD", "USD"), ("US$", "USD"), ("€", "EUR"), ("jpy", "JPY"), ("S$", "SGD"),
+    ("$", None), ("¥", None), ("XYZ", None), ("", None), (None, None), (12, None),
+])
+def test_currency_is_cleaned_to_an_iso_code(raw, code):
+    assert normalise_currency(raw) == code
+
+
+def test_the_currency_reaches_the_receipt_and_is_asked_for():
+    assert to_receipt({"merchant_name": "Jollibee", "total": 99, "currency": "₱"}).currency == "PHP"
+    assert to_receipt({"merchant_name": "Diner", "total": 9, "currency": "$"}).currency is None
+    assert to_receipt({"merchant_name": "Old answer", "total": 9}).currency is None
+    assert "ISO 4217" in generic_prompt(ExtractionOptions())
