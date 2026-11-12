@@ -11,12 +11,14 @@ year read as the day).
 """
 
 import asyncio
+import math
+import re
 import base64
 import io
 import json
 import logging
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
 from PIL import Image
@@ -134,6 +136,31 @@ def to_receipt(data: Dict[str, Any]) -> ReceiptData:
     return ReceiptData(**clean)
 
 
+# WORK-0016 (spike WORK-0015): the model's own doubt about a field is the lowest probability of any digit
+# it wrote inside that field's value. On the owner's labelled receipts this separates wrong totals and dates.
+CONFIDENCE_FIELDS = {"date": r'"date"\s*:\s*"([^"]*)"', "total": r'"total"\s*:\s*(-?[\d.,]+)'}
+
+
+def field_confidence(tokens: Optional[List[Tuple[str, float]]]) -> Optional[Dict[str, Optional[float]]]:
+    """{field: lowest digit probability (0..1), or None when the field has no digits}; None without tokens."""
+    if not tokens:
+        return None
+    text, starts = "", []
+    for tok, _ in tokens:
+        starts.append(len(text))
+        text += tok
+    out: Dict[str, Optional[float]] = {}
+    for field, pattern in CONFIDENCE_FIELDS.items():
+        m = re.search(pattern, text)
+        if not m:
+            out[field] = None
+            continue
+        a, b = m.span(1)
+        probs = [math.exp(lp) for (tok, lp), s in zip(tokens, starts) if s < b and s + len(tok) > a and re.search(r"\d", tok)]
+        out[field] = round(min(probs), 4) if probs else None
+    return out
+
+
 def keep_alive(value: str):
     """Ollama takes a duration ("30m") or a number of seconds (-1 = stay loaded), never "-1"."""
     v = str(value).strip()
@@ -161,12 +188,14 @@ class VisionLLMService:
                 raise TimeoutError("parse deadline reached before the vision-model call")
         payload = self._payload(image, options)
         started = time.monotonic()
-        content = await asyncio.to_thread(self._chat, payload, timeout)
+        answer = await asyncio.to_thread(self._chat, payload, timeout)
+        content, tokens = (answer, None) if isinstance(answer, str) else answer
         try:
             data = json.loads(content)
         except json.JSONDecodeError as e:
             raise ValueError(f"vision model answer is not JSON: {e}") from e
         receipt = to_receipt(data)
+        receipt.field_confidence = field_confidence(tokens)
         logger.info(f"Vision model parsed the receipt in {(time.monotonic() - started) * 1000:.0f}ms")
         return receipt
 
@@ -193,18 +222,21 @@ class VisionLLMService:
         }
         if fmt:
             payload["format"] = fmt
+            payload["logprobs"] = True  # WORK-0016: per-token probabilities for field_confidence
         return payload
 
-    def _chat(self, payload: Dict[str, Any], timeout: float) -> str:
+    def _chat(self, payload: Dict[str, Any], timeout: float) -> Union[str, Tuple[str, List[Tuple[str, float]]]]:
         try:
             r = requests.post(f"{self.host}/api/chat", json=payload, timeout=timeout)
             r.raise_for_status()
         except requests.exceptions.RequestException as e:
             raise RuntimeError(f"Vision model API error: {e}") from e
-        content = r.json().get("message", {}).get("content", "")
+        body = r.json()
+        content = body.get("message", {}).get("content", "")
         if not content:
             raise RuntimeError("Empty answer from the vision model")
-        return content
+        tokens = [(t.get("token", ""), t.get("logprob", 0.0)) for t in body.get("logprobs") or []]
+        return (content, tokens) if tokens else content
 
     async def health_check(self) -> Dict[str, Any]:
         try:

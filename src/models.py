@@ -2,7 +2,7 @@
 Pydantic models for receipt parsing API.
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 from datetime import datetime
 
@@ -57,6 +57,8 @@ class ReceiptData(BaseModel):
     discount: Optional[float] = Field(default=None, description="Discount amount")
     total: float = Field(..., description="Total amount paid")
     currency: Optional[str] = Field(default=None, description="ISO 4217 code of the amounts when printed (WORK-0014)")
+    field_confidence: Optional[Dict[str, Optional[float]]] = Field(
+        default=None, description="WORK-0016: lowest digit probability per field (date, total); null without the vision model")
 
     payment_method: Optional[str] = Field(default=None, description="Payment method (cash/card/etc)")
     card_last_4: Optional[str] = Field(default=None, description="Last 4 digits of card if visible")
@@ -89,6 +91,7 @@ class ReceiptResponse(BaseModel):
     discount: Optional[float] = None
     total: float
     currency: Optional[str] = None
+    field_confidence: Optional[Dict[str, Optional[float]]] = None
     payment_method: Optional[str] = None
     card_last_4: Optional[str] = None
     receipt_number: Optional[str] = None
