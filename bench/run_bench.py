@@ -24,6 +24,7 @@ SCHEMA = {
     "type": "object",
     "properties": {
         "merchant_name": {"type": ["string", "null"]},
+        "date": {"type": ["string", "null"]},
         "items": {
             "type": "array",
             "items": {
@@ -34,18 +35,20 @@ SCHEMA = {
                     "unit_price": {"type": ["number", "null"]},
                     "total_price": {"type": ["number", "null"]},
                 },
-                "required": ["name", "total_price"],
+                # Every key required (null allowed): otherwise models drop optional fields.
+                "required": ["name", "quantity", "unit_price", "total_price"],
             },
         },
         "subtotal": {"type": ["number", "null"]},
         "tax": {"type": ["number", "null"]},
         "total": {"type": ["number", "null"]},
     },
-    "required": ["items", "total"],
+    "required": ["merchant_name", "date", "items", "subtotal", "tax", "total"],
 }
 
 TEMPLATE = {
     "merchant_name": "",
+    "date": "",
     "items": [{"name": "", "quantity": 0, "unit_price": 0, "total_price": 0}],
     "subtotal": 0,
     "tax": 0,
@@ -53,7 +56,7 @@ TEMPLATE = {
 }
 
 GENERIC_PROMPT = (
-    "Read this receipt and return its data as JSON with these fields: merchant_name, "
+    "Read this receipt and return its data as JSON with these fields: merchant_name, date (YYYY-MM-DD), "
     "items (each: name, quantity, unit_price, total_price), subtotal, tax, total. "
     "Copy amounts as plain numbers exactly as printed, without currency symbols. "
     "Use null for anything not printed. Return only the JSON."

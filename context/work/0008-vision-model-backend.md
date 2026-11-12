@@ -26,7 +26,7 @@ WORK-0006 measured the current local fallback at 60% correct totals and 0.44 ite
 
 ## Decision
 
-Proposed: add a `vlm_ollama` backend (one image call, JSON schema through Ollama `format`, temperature 0, thinking off) and make it the default; keep PaddleOCR + llama3.2 only if a fallback is still wanted. Run it on an Ollama with Vulkan on the 890M: a dedicated `parser-ollama` container (simplest, no effect on other services) or `shared-ollama` moved to the Vulkan image after checking RAG and flutter-rag. Ask explicitly for the printed subtotal and re-compare Qwen3.5-4B with Gemma 4 E4B on subtotal before fixing the model. Fits WORK-0005's 70 s deadline (p90 13.5 s).
+Proposed: add a `vlm_ollama` backend (one image call, JSON schema through Ollama `format`, temperature 0, thinking off) and make it the default; keep PaddleOCR + llama3.2 only if a fallback is still wanted. Run it on an Ollama with Vulkan on the 890M: a dedicated `parser-ollama` container (simplest, no effect on other services) or `shared-ollama` moved to the Vulkan image after checking RAG and flutter-rag. Ask explicitly for the printed subtotal and re-compare Qwen3.5-4B with Gemma 4 E4B on subtotal before fixing the model. Fits WORK-0005's 70 s deadline (p90 13.5 s on CORD, 38.3 s on the owner's receipts). WORK-0009 confirmed the choice on the owner's receipts (totals 76%, merchant 88%, date 55%): ask for the date exactly as printed and normalise it in code (MM/DD first), and keep the app's confirmation step.
 
 ## Options considered
 
@@ -38,7 +38,7 @@ See WORK-0006.
 
 **Negative / Trade-offs accepted:** about 4 GB of shared memory while loaded; GPU contention with other Ollama users if shared.
 
-**Risks / Open questions:** accuracy on the app's own (non-Indonesian) receipts is unmeasured; the Expense privacy text (expense WORK-0038) changes once Gemini is gone.
+**Risks / Open questions:** measured on 58 owner-labelled receipts only (WORK-0009); the Expense privacy text (expense WORK-0038) changes once Gemini is gone.
 
 ## Definition of done
 
@@ -50,6 +50,7 @@ See WORK-0006.
 <!-- Append-only. One line per status change or notable event. This is the
      audit trail — do not rewrite past entries. -->
 - 2026-11-11 proposed — from WORK-0006's results.
+- 2026-11-12 updated — WORK-0009 (owner's receipts) confirms Qwen3.5-4B; adds the date-normalisation step.
 
 ---
 
