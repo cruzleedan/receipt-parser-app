@@ -54,6 +54,7 @@ See WORK-0006.
 - 2026-11-12 building — owner: "proceed with your recommendations" (cheap prompt fixes scored against the WORK-0009 labels, then the backend).
 - 2026-11-12 prompt results (owner's 58 labels; total / date / merchant / all three): baseline prompt 76/55/88/36%; date-as-printed + total rule 86/60/93/50%; the same without the example date (the model had copied it into an answer) 84/71/91/57%. NuExtract3 (WORK-0010) 81/47/91/38% at best: Qwen3.5-4B kept. Bench date scoring now uses the parser's own `src/dates.py`.
 - 2026-11-12 implemented and verified — `vlm_ollama` backend (`src/vlm_service.py`, `src/dates.py`), month-first date normalisation, answer cleaning (no total → fallback; fractional quantities → 1), `parser-ollama` container (Ollama 0.40.12, Vulkan on the 890M) in `compose.yml`. `pytest`: 28 passed. End to end through the parser on the labelled receipts: 84/64/90/48%, 59 of 60 answered by the vision model (1 fell back: no total), median 16.1 s, p90 38.9 s, max 54.9 s, inside the 70 s deadline.
+- 2026-11-12 deploy regression — `VLM_KEEP_ALIVE=-1` reached Ollama as the string "-1" (400 "missing unit in duration"), so every production parse fell back to the local pipeline (still 200). Tests had stubbed the Ollama call. No rollback image existed (the old image's layers had been cleaned up); fixed forward: numeric values are sent as numbers, with a test.
 
 ---
 

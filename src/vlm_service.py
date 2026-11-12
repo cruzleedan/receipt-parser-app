@@ -126,6 +126,12 @@ def to_receipt(data: Dict[str, Any]) -> ReceiptData:
     return ReceiptData(**clean)
 
 
+def keep_alive(value: str):
+    """Ollama takes a duration ("30m") or a number of seconds (-1 = stay loaded), never "-1"."""
+    v = str(value).strip()
+    return int(v) if v.lstrip("-").isdigit() else v
+
+
 class VisionLLMService:
     """One Ollama vision model that reads the receipt image directly."""
 
@@ -174,7 +180,7 @@ class VisionLLMService:
             fmt = json_schema(options)
         payload = {
             "model": self.model, "messages": messages, "stream": False, "think": False,
-            "keep_alive": settings.vlm_keep_alive,
+            "keep_alive": keep_alive(settings.vlm_keep_alive),
             "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 2048},
         }
         if fmt:
