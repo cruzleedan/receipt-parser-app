@@ -1,6 +1,7 @@
 """WORK-0008: the local vision-model backend."""
 
 import io
+import math
 import json
 import time
 
@@ -12,7 +13,7 @@ import src.main as main
 from src.config import settings
 from src.models import ExtractionOptions
 from src.utils import normalise_date
-from src.vlm_service import VisionLLMService, generic_prompt, json_schema, keep_alive, nuextract_template, to_receipt
+from src.vlm_service import VisionLLMService, field_confidence, generic_prompt, json_schema, keep_alive, nuextract_template, to_receipt
 from src.currency import normalise_currency
 
 
@@ -177,3 +178,31 @@ def test_the_currency_reaches_the_receipt_and_is_asked_for():
     assert to_receipt({"merchant_name": "Diner", "total": 9, "currency": "$"}).currency is None
     assert to_receipt({"merchant_name": "Old answer", "total": 9}).currency is None
     assert "ISO 4217" in generic_prompt(ExtractionOptions())
+
+
+# WORK-0016: the lowest digit probability inside each field's value.
+def test_field_confidence_takes_the_least_sure_digit_of_each_field():
+    lp = math.log
+    tokens = [('{"', lp(0.9)), ("date", lp(1)), ('": "', lp(1)), ("0", lp(0.99)), ("8", lp(0.42)), ("/29/24", lp(0.97)),
+              ('", "', lp(1)), ("total", lp(1)), ('": ', lp(0.1)), ("262", lp(0.95)), (".", lp(0.5)), ("50", lp(0.88)), ("}", lp(1))]
+    conf = field_confidence(tokens)
+    assert conf == {"date": 0.42, "total": 0.88}, "the '.' and the punctuation around values do not count"
+    assert field_confidence(None) is None and field_confidence([]) is None
+    assert field_confidence([('{"total": null}', 0.0)]) == {"date": None, "total": None}
+
+
+async def test_the_parse_reports_field_confidence(vlm_app, monkeypatch):
+    sent = {}
+    answer = '{"merchant_name": "A", "date": "08/29/24", "total": 9}'
+
+    def chat(payload, timeout):
+        sent.update(payload=payload)
+        parts = ['{"merchant_name": "A", "date": "', "08/29/24", '", "total": ', "9", "}"]
+        assert "".join(parts) == answer
+        return answer, list(zip(parts, map(math.log, [1.0, 0.6, 1.0, 0.95, 1.0])))
+
+    monkeypatch.setattr(vlm_app, "_chat", chat)
+    async with _client() as client:
+        r = await client.post("/parse", files={"file": ("r.png", _png(), "image/png")})
+    assert r.status_code == 200 and sent["payload"]["logprobs"] is True
+    assert r.json()["field_confidence"] == {"date": 0.6, "total": 0.95}
