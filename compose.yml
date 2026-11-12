@@ -17,6 +17,12 @@ services:
     env_file:
       - .env
     environment:
+      # WORK-0008: one local vision model reads the receipt; PaddleOCR + llama3.2 is the fallback.
+      # No images go to Gemini (WORK-0003); GEMINI_* in .env is no longer used by this backend.
+      - PARSER_BACKEND=vlm_ollama
+      - VLM_HOST=http://parser-ollama:11434
+      - VLM_MODEL=${VLM_MODEL:-qwen3.5:4b}
+      - VLM_KEEP_ALIVE=-1
       - OLLAMA_HOST=http://shared-ollama:11434
       - OLLAMA_MODEL=llama3.2-gpu:latest
       - OLLAMA_TIMEOUT=120
@@ -31,6 +37,8 @@ services:
       - FLAGS_enable_pir_api=false
       - CPU_NUM=4
       - PYTHONUNBUFFERED=1
+    depends_on:
+      - parser-ollama
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -51,6 +59,43 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  # WORK-0008: the parser's own Ollama on the Radeon 890M through Vulkan, separate from
+  # shared-ollama (ROCm image, used by RAG and flutter-rag). Not published; only the parser reaches it.
+  # After a fresh volume: docker exec parser-ollama ollama pull qwen3.5:4b
+  parser-ollama:
+    image: ollama/ollama:0.40.12
+    container_name: parser-ollama
+    networks:
+      - default
+    devices:
+      - /dev/dri:/dev/dri
+    # d3's render and video group ids (getent group render video); the container has no such names.
+    group_add:
+      - "993"
+      - "44"
+    environment:
+      - OLLAMA_VULKAN=1
+      - OLLAMA_IGPU_ENABLE=1
+      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_NUM_PARALLEL=1
+    volumes:
+      - parser-ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  parser-ollama-models:
 
 networks:
   rag-network:

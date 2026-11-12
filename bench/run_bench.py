@@ -61,6 +61,20 @@ GENERIC_PROMPT = (
     "Copy amounts as plain numbers exactly as printed, without currency symbols. "
     "Use null for anything not printed. Return only the JSON."
 )
+# WORK-0008 prompt variants for the generic (Qwen/Gemma) path.
+VARIANT_PROMPTS = {
+    "v1": (
+        "Read this receipt and return its data as JSON with these fields: merchant_name, date, "
+        "items (each: name, quantity, unit_price, total_price), subtotal, tax, total.\n"
+        "- merchant_name: the store or business name at the top, not the address or the operator company.\n"
+        "- date: the transaction date copied exactly as printed on the receipt, including the year; "
+        "do not reorder or convert it.\n"
+        "- total: the final amount due for the purchase (the line labelled TOTAL, AMOUNT DUE or similar), "
+        "not the cash tendered, the change, or the VATable/subtotal amount.\n"
+        "Copy amounts as plain numbers without currency symbols. Use null for anything not printed. "
+        "Return only the JSON."
+    ),
+}
 PROMPTS = {
     # GLM-OCR's documented extraction prompt (model card): Chinese instruction + JSON template.
     "glm-ocr": "请按下列JSON格式输出图中信息:\n" + json.dumps(TEMPLATE, ensure_ascii=False),
@@ -86,8 +100,41 @@ def post_json(url: str, payload: dict, timeout: float) -> dict:
         return json.loads(r.read())
 
 
+# WORK-0010: NuExtract3 is prompted with its own roles (model template): a typed template, optional
+# instructions, and the image in the user message. Types per its card: verbatim-string, date, number.
+NUEXTRACT_TEMPLATE = {
+    "merchant_name": "verbatim-string",
+    "date": "date",
+    "items": [{"name": "verbatim-string", "quantity": "number", "unit_price": "number", "total_price": "number"}],
+    "subtotal": "number",
+    "tax": "number",
+    "total": "number",
+}
+NUEXTRACT_INSTRUCTIONS = (
+    "merchant_name is the store or business name at the top. total is the final amount due for the "
+    "purchase, not the cash tendered, the change or the VATable amount. Philippine receipts print "
+    "dates month first (MM/DD/YY)."
+)
+
+
+def run_nuextract(args, path: Path) -> dict:
+    messages = [{"role": "template", "content": json.dumps(NUEXTRACT_TEMPLATE)}]
+    if args.variant == "v1":
+        messages.append({"role": "instructions", "content": NUEXTRACT_INSTRUCTIONS})
+    messages.append({"role": "user", "content": "", "images": [image_b64(path, args.max_side)]})
+    payload = {
+        "model": args.model, "messages": messages, "stream": False, "think": False, "keep_alive": "30m",
+        "options": {"temperature": 0, "num_ctx": 8192, "num_predict": 2048},
+    }
+    res = post_json(f"{args.url}/api/chat", payload, args.timeout)
+    return {"raw": res["message"]["content"], "prompt_eval_ms": res.get("prompt_eval_duration", 0) / 1e6,
+            "eval_ms": res.get("eval_duration", 0) / 1e6}
+
+
 def run_ollama(args, path: Path) -> dict:
-    prompt = GENERIC_PROMPT
+    if "nuextract" in args.model.lower():
+        return run_nuextract(args, path)
+    prompt = VARIANT_PROMPTS.get(args.variant, GENERIC_PROMPT)
     for key, p in PROMPTS.items():
         if key in args.model.lower():
             prompt = p
@@ -166,6 +213,7 @@ def main() -> int:
     ap.add_argument("--timeout", type=float, default=300)
     ap.add_argument("--pause", type=float, default=0)
     ap.add_argument("--no-think-field", action="store_true")
+    ap.add_argument("--variant", default="v0", help="v0 = WORK-0006/0009 prompt; v1 = WORK-0008 date-as-printed prompt")
     args = ap.parse_args()
 
     runner = {"ollama": run_ollama, "parser": run_parser, "donut": run_donut}[args.backend]

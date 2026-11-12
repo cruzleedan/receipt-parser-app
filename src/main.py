@@ -27,6 +27,7 @@ from src.config import settings
 from src.ocr_service import ReceiptOCRService
 from src.llm_service import OllamaLLMService
 from src.gemini_service import GeminiReceiptService
+from src.vlm_service import VisionLLMService
 from src.utils import load_image_from_bytes
 
 import sys
@@ -58,12 +59,13 @@ app = FastAPI(
 ocr_service: ReceiptOCRService = None
 llm_service: OllamaLLMService = None
 gemini_service: GeminiReceiptService = None
+vlm_service: VisionLLMService = None
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
-    global ocr_service, llm_service, gemini_service
+    global ocr_service, llm_service, gemini_service, vlm_service
 
     logger.info("Starting Receipt Parser API...")
     logger.info(f"Parser backend: {settings.parser_backend}")
@@ -78,6 +80,9 @@ async def startup_event():
         except Exception as e:
             logger.error(f"Failed to initialize Gemini service: {e}")
             gemini_service = None
+
+    if settings.parser_backend == "vlm_ollama":
+        vlm_service = VisionLLMService()
 
     # Initialize OCR service (used as fallback, or as primary when not using Gemini)
     try:
@@ -135,6 +140,12 @@ async def health():
                 gemini_status = {"status": "error", "backend": "Gemini", "error": "not initialized"}
             services["gemini"] = gemini_status
             if gemini_status.get("status") != "connected":
+                overall_status = "degraded"
+
+        if settings.parser_backend == "vlm_ollama":
+            vlm_status = await vlm_service.health_check() if vlm_service else {"status": "error", "error": "not initialized"}
+            services["vlm"] = vlm_status
+            if vlm_status.get("status") != "connected" or not vlm_status.get("model_available"):
                 overall_status = "degraded"
 
         return HealthResponse(
@@ -245,7 +256,22 @@ async def _parse_with_gemini(
 
 
 async def _run_backends(image, extraction_options: ExtractionOptions, start_time: float, deadline: float):
-    """Gemini first if configured, then PaddleOCR + Ollama, all before `deadline`."""
+    """Gemini or the vision model first if configured, then PaddleOCR + Ollama, all before `deadline`."""
+    if settings.parser_backend == "vlm_ollama" and vlm_service is not None:
+        try:
+            receipt = await vlm_service.parse_receipt(
+                image, extraction_options=extraction_options, deadline=deadline,
+                reserve_seconds=settings.vlm_fallback_reserve_seconds,
+            )
+            elapsed = (time.time() - start_time) * 1000
+            logger.info("Receipt parsed using the vision model")
+            return ReceiptResponse(
+                **receipt.dict(),
+                processing_metadata=ProcessingMetadata(
+                    ocr_time_ms=0.0, llm_time_ms=elapsed, total_time_ms=elapsed, ocr_confidence=1.0),
+            )
+        except Exception as e:
+            logger.warning(f"Vision model failed, falling back to PaddleOCR + Ollama: {type(e).__name__}: {str(e)[:200]}")
     if settings.parser_backend == "gemini" and gemini_service is not None:
         try:
             response = await _parse_with_gemini(image, extraction_options, start_time, deadline)

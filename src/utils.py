@@ -24,3 +24,6 @@ def load_image_from_bytes(image_bytes: bytes) -> Image.Image:
         image = image.convert("RGB")
 
     return image
+
+
+from src.dates import normalise_date  # noqa: E402,F401  (WORK-0008; kept here for callers)

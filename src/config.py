@@ -8,9 +8,19 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application configuration with environment variable support."""
 
+    # WORK-0008: local vision model in Ollama ("vlm_ollama" backend; falls back to paddleocr_ollama).
+    vlm_host: str = "http://parser-ollama:11434"
+    vlm_model: str = "qwen3.5:4b"
+    vlm_timeout: int = 60
+    vlm_max_side: int = 1280
+    vlm_keep_alive: str = "30m"
+    # Time kept for the local OCR fallback when the vision model fails or is slow.
+    vlm_fallback_reserve_seconds: float = 10
+
     # Parser Backend Selection
     # "gemini": use Gemini vision API (falls back to paddleocr_ollama on failure)
     # "paddleocr_ollama": use PaddleOCR + Ollama only
+    # "vlm_ollama": one local vision model (WORK-0008), falls back to paddleocr_ollama
     parser_backend: str = "paddleocr_ollama"
 
     # Gemini Configuration

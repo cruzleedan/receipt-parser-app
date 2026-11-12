@@ -14,8 +14,9 @@ Two backends are supported, selected via the `PARSER_BACKEND` env var:
 
 | Backend | Value | How it works |
 |---|---|---|
-| PaddleOCR + Ollama | `paddleocr_ollama` | OCR extracts text → Ollama LLM structures it as JSON (default) |
-| Google Gemini | `gemini` | Sends image directly to Gemini Vision API; falls back to paddleocr_ollama on failure |
+| Local vision model | `vlm_ollama` | One Ollama vision model (`VLM_MODEL`, default `qwen3.5:4b`) reads the image and answers JSON; falls back to paddleocr_ollama. **Production** (WORK-0008) |
+| PaddleOCR + Ollama | `paddleocr_ollama` | OCR extracts text → Ollama LLM structures it as JSON (code default; the fallback) |
+| Google Gemini | `gemini` | Sends image directly to Gemini Vision API; falls back to paddleocr_ollama on failure. Not used since WORK-0008 (free tier: 20 requests/day, data use per WORK-0003) |
 
 ---
 
@@ -44,7 +45,10 @@ receipt-parser-app/
 - Joins the external Docker network `shared-ollama-network` and the default network.
   `rag-network` is the local Compose key; `name: shared-ollama-network` selects
   the actual shared network.
-- Accesses Ollama at `http://shared-ollama:11434` (set via `OLLAMA_HOST` env var)
+- Accesses Ollama at `http://shared-ollama:11434` (set via `OLLAMA_HOST` env var) for the fallback
+- The vision model runs in its own `parser-ollama` container (Vulkan on the Radeon 890M,
+  volume `parser-ollama-models`, not published). After a fresh volume:
+  `docker exec parser-ollama ollama pull qwen3.5:4b`
 - Start `ollama-service` or run the homelab bootstrap script to create the shared
   network before starting the parser.
 
@@ -67,7 +71,8 @@ docker compose -f compose.yml up -d --build
 
 ## Critical Dependencies
 
-- **Requires Ollama service running** when `PARSER_BACKEND=paddleocr_ollama`
+- **Requires `parser-ollama` with the model pulled** when `PARSER_BACKEND=vlm_ollama`
+- **Requires Ollama service running** when `PARSER_BACKEND=paddleocr_ollama` (also the fallback)
 - **Requires `GEMINI_API_KEY`** in `.env` when `PARSER_BACKEND=gemini`
 - `receipts/` is a read-only volume mount — do not modify contents from within the container
 
@@ -79,6 +84,11 @@ docker compose -f compose.yml up -d --build
 - [ ] No parse results kept on disk unless `SAVE_OUTPUT=true` (local debugging only, WORK-0002)
 
 ---
+
+## Benchmark
+
+`bench/` scores backends on receipts (README there). Accuracy against the owner's labels:
+`bench/score_labels.py` (WORK-0009; the photos stay in `/home/dan/receipt-bench/`, never in the repo).
 
 ## Context
 
