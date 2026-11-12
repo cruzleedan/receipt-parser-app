@@ -12,7 +12,7 @@ import src.main as main
 from src.config import settings
 from src.models import ExtractionOptions
 from src.utils import normalise_date
-from src.vlm_service import VisionLLMService, json_schema, nuextract_template, to_receipt
+from src.vlm_service import VisionLLMService, json_schema, keep_alive, nuextract_template, to_receipt
 
 
 @pytest.mark.parametrize("raw, iso", [
@@ -146,3 +146,16 @@ async def test_health_reports_the_vision_model(vlm_app, monkeypatch):
     async with _client() as client:
         r = await client.get("/health")
     assert r.json()["services"]["vlm"]["model_available"] is True and r.json()["status"] == "healthy"
+
+
+def test_keep_alive_numbers_are_sent_as_numbers():
+    # Production regression (2026-11-12): Ollama rejected keep_alive "-1" with 400.
+    assert keep_alive("-1") == -1 and keep_alive("0") == 0 and keep_alive("30m") == "30m"
+    svc = VisionLLMService(host="http://stub", model="qwen3.5:4b")
+    import src.vlm_service as vs
+    old = vs.settings.vlm_keep_alive
+    try:
+        vs.settings.vlm_keep_alive = "-1"
+        assert svc._payload(Image.new("RGB", (10, 10)), ExtractionOptions())["keep_alive"] == -1
+    finally:
+        vs.settings.vlm_keep_alive = old
