@@ -171,7 +171,8 @@ def run_parser(args, path: Path) -> dict:
             data = json.loads(r.read())
     except urllib.error.HTTPError as e:
         return {"raw": None, "error": f"HTTP {e.code}"}
-    backend = "gemini" if data.get("processing_metadata", {}).get("ocr_time_ms") == 0 else "local"
+    metadata = data.get("processing_metadata", {})
+    backend = metadata.get("backend") or ("vision_unknown" if metadata.get("ocr_time_ms") == 0 else "paddleocr_ollama")
     return {"raw": json.dumps(data), "backend": backend}
 
 

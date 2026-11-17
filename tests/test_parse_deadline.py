@@ -93,7 +93,10 @@ async def test_gemini_is_skipped_when_only_the_fallback_reserve_is_left(monkeypa
 
 
 async def test_each_gemini_attempt_is_bounded(monkeypatch):
-    service = _gemini(monkeypatch, lambda *a: time.sleep(3) or "{}")
+    async def slow_call(*args):
+        await asyncio.sleep(3)
+        return "{}"
+    service = _gemini(monkeypatch, slow_call)
     service.timeout_seconds = 0.3
     started = time.monotonic()
     with pytest.raises(RuntimeError):

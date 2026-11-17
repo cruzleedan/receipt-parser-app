@@ -41,6 +41,7 @@ def test_the_sample_receipt_is_read_by_the_intended_backend():
     if EXPECTED_BACKEND == "vlm_ollama":
         # The vision path reports no OCR time; a fallback reports PaddleOCR's. This is the check
         # that the keep_alive and Gemini-v1 regressions would have failed (WORK-0012).
+        assert meta["backend"] == "vlm_ollama", meta
         assert meta["ocr_time_ms"] == 0.0, f"answered by the fallback, not the vision model: {meta}"
     assert abs(body["total"] - 24.10) < 0.01, body
     assert len(body["items"]) >= 3, body["items"]

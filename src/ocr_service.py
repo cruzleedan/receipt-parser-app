@@ -36,10 +36,13 @@ class ReceiptOCRService:
 
         logger.info(f"Initializing PaddleOCR (GPU: {use_gpu})")
 
+        self.device = settings.ocr_device or ("gpu:0" if use_gpu else "cpu")
+
         # Optimized PaddleOCR configuration for receipts
         # Disable preprocessing steps that aren't needed for typical receipt images
         self.ocr = PaddleOCR(
             lang=settings.ocr_lang,
+            device=self.device,
             use_doc_orientation_classify=False,  # Receipts are usually upright
             use_doc_unwarping=False,  # Skip document unwarping
             use_textline_orientation=False,  # Skip textline orientation detection
@@ -47,7 +50,8 @@ class ReceiptOCRService:
 
         # Create output directory
         self.output_dir = Path(settings.output_dir)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        if settings.save_output:
+            self.output_dir.mkdir(parents=True, exist_ok=True)
 
         logger.info("PaddleOCR initialized successfully")
 
@@ -81,16 +85,16 @@ class ReceiptOCRService:
             ocr_result = results[0]
             rec_texts = ocr_result.get("rec_texts", [])
             rec_scores = ocr_result.get("rec_scores", [])
-            dt_polys = ocr_result.get("dt_polys")
+            rec_polys = ocr_result.get("rec_polys")
 
             # PaddleOCR returns text in reading order - just join with newlines
             full_text = "\n".join(rec_texts) if rec_texts else ""
 
             # Calculate average confidence
-            confidence = float(np.mean(rec_scores)) if rec_scores else 0.0
+            confidence = float(np.mean(rec_scores)) if len(rec_scores) else 0.0
 
             # Convert boxes to serializable format (for API response)
-            boxes = self._serialize_boxes(dt_polys, rec_texts, rec_scores)
+            boxes = self._serialize_boxes(rec_polys, rec_texts, rec_scores)
 
             elapsed_ms = (time.time() - start_time) * 1000
             logger.info(
@@ -143,8 +147,9 @@ class ReceiptOCRService:
             status = "ready" if self.ocr is not None else "not_ready"
             return {
                 "status": status,
-                "backend": "PaddleOCR PP-OCRv4",
-                "gpu_enabled": settings.ocr_use_gpu,
+                "backend": "PaddleOCR",
+                "gpu_enabled": self.device.startswith("gpu"),
+                "device": self.device,
                 "language": settings.ocr_lang,
             }
         except Exception as e:
@@ -152,25 +157,28 @@ class ReceiptOCRService:
             return {"status": "error", "error": str(e)}
 
     @staticmethod
-    def _serialize_boxes(dt_polys, rec_texts, rec_scores) -> list:
+    def _serialize_boxes(rec_polys, rec_texts, rec_scores) -> list:
         """
         Convert boxes to JSON-serializable format.
 
         Args:
-            dt_polys: Detection polygons (numpy array)
+            rec_polys: Recognition polygons (numpy array)
             rec_texts: Recognized texts (list)
             rec_scores: Recognition scores (numpy array)
 
         Returns:
             List of serializable box dictionaries
         """
-        if dt_polys is None or not len(rec_texts):
+        if rec_polys is None or not len(rec_texts):
             return []
 
         # Convert numpy arrays to Python types efficiently
-        # dt_polys shape is (N, 4, 2) where N is number of boxes
-        polys_list = dt_polys.astype(float).tolist() if hasattr(dt_polys, 'tolist') else dt_polys
-        scores_list = rec_scores.tolist() if hasattr(rec_scores, 'tolist') else list(rec_scores)
+        # rec_polys shape is (N, 4, 2) where N is number of boxes
+        polys_list = np.asarray(rec_polys, dtype=float).tolist()
+        scores_list = np.asarray(rec_scores, dtype=float).tolist()
+
+        if len(polys_list) != len(rec_texts) or len(scores_list) != len(rec_texts):
+            raise ValueError("OCR recognition polygons, text and scores are misaligned")
 
         return [
             {"points": polys_list[i], "text": rec_texts[i], "confidence": scores_list[i]}

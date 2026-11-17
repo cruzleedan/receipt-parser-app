@@ -82,7 +82,7 @@ class StubOCR:
 
 class StubLLM:
     async def health_check(self):
-        return {"status": "connected"}
+        return {"status": "connected", "model_available": True}
 
 
 @pytest.fixture
@@ -104,7 +104,7 @@ def _client():
 async def test_the_vision_model_answers_the_parse(vlm_app, monkeypatch):
     sent = {}
 
-    def chat(payload, timeout):
+    async def chat(payload, timeout):
         sent.update(payload=payload, timeout=timeout)
         return json.dumps({"merchant_name": "Mercury Drug", "date": "08/29/24", "total": 262.5, "items": []})
 
@@ -120,7 +120,9 @@ async def test_the_vision_model_answers_the_parse(vlm_app, monkeypatch):
 
 
 async def test_a_failed_vision_answer_falls_back_to_the_local_pipeline(vlm_app, monkeypatch):
-    monkeypatch.setattr(vlm_app, "_chat", lambda payload, timeout: json.dumps({"total": None}))
+    async def broken(payload, timeout):
+        return json.dumps({"total": None})
+    monkeypatch.setattr(vlm_app, "_chat", broken)
     called = []
 
     async def fallback(image, options, start_time, deadline=None):
@@ -195,7 +197,7 @@ async def test_the_parse_reports_field_confidence(vlm_app, monkeypatch):
     sent = {}
     answer = '{"merchant_name": "A", "date": "08/29/24", "total": 9}'
 
-    def chat(payload, timeout):
+    async def chat(payload, timeout):
         sent.update(payload=payload)
         parts = ['{"merchant_name": "A", "date": "', "08/29/24", '", "total": ', "9", "}"]
         assert "".join(parts) == answer

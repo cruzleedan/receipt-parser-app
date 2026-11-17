@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import List
 import json
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from src.models import (
+    ReceiptData,
     ReceiptResponse,
     ProcessingMetadata,
     ParseError,
@@ -28,7 +29,9 @@ from src.ocr_service import ReceiptOCRService
 from src.llm_service import OllamaLLMService
 from src.gemini_service import GeminiReceiptService
 from src.vlm_service import VisionLLMService
-from src.utils import load_image_from_bytes
+from src.utils import load_image_from_bytes, ImageTooLarge
+from src.workers import image_worker, CapacityError
+from src.ingress import IngressMiddleware
 
 import sys
 
@@ -54,6 +57,8 @@ app = FastAPI(
     description="Two-stage receipt parser using PaddleOCR + Ollama",
     version="1.0.0",
 )
+
+app.add_middleware(IngressMiddleware)
 
 # Global service instances
 ocr_service: ReceiptOCRService = None
@@ -117,50 +122,38 @@ async def root():
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    """Health check endpoint."""
-    try:
-        # Check OCR service
-        ocr_status = await ocr_service.health_check()
+    """Diagnostic health stays HTTP 200; /ready is the readiness contract."""
+    checks = {"ocr": ocr_service, "llm": llm_service}
+    if settings.parser_backend == "vlm_ollama":
+        checks["vlm"] = vlm_service
+    if settings.parser_backend == "gemini":
+        checks["gemini"] = gemini_service
 
-        # Check LLM service
-        llm_status = await llm_service.health_check()
+    async def probe(service):
+        if service is None:
+            return {"status": "error", "error": "not initialized"}
+        try:
+            return await asyncio.wait_for(service.health_check(), settings.health_timeout_seconds)
+        except Exception as exc:
+            return {"status": "error", "error": str(exc) or "health deadline exceeded"}
 
-        services = {"ocr": ocr_status, "llm": llm_status}
+    results = await asyncio.gather(*(probe(service) for service in checks.values()))
+    services = dict(zip(checks, results))
+    ready = services["ocr"].get("status") == "ready"
+    for name, result in services.items():
+        if name != "ocr":
+            ready &= result.get("status") == "connected"
+            if name in ("llm", "vlm"):
+                ready &= result.get("model_available") is True
+    return HealthResponse(status="healthy" if ready else "degraded", services=services,
+                          timestamp=datetime.utcnow().isoformat() + "Z")
 
-        # Overall status
-        overall_status = "healthy"
-        if ocr_status.get("status") != "ready" or llm_status.get("status") != "connected":
-            overall_status = "degraded"
 
-        # Check Gemini service (if configured as backend)
-        if settings.parser_backend == "gemini":
-            if gemini_service is not None:
-                gemini_status = await gemini_service.health_check()
-            else:
-                gemini_status = {"status": "error", "backend": "Gemini", "error": "not initialized"}
-            services["gemini"] = gemini_status
-            if gemini_status.get("status") != "connected":
-                overall_status = "degraded"
-
-        if settings.parser_backend == "vlm_ollama":
-            vlm_status = await vlm_service.health_check() if vlm_service else {"status": "error", "error": "not initialized"}
-            services["vlm"] = vlm_status
-            if vlm_status.get("status") != "connected" or not vlm_status.get("model_available"):
-                overall_status = "degraded"
-
-        return HealthResponse(
-            status=overall_status,
-            services=services,
-            timestamp=datetime.utcnow().isoformat() + "Z",
-        )
-
-    except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return HealthResponse(
-            status="unhealthy",
-            services={"error": str(e)},
-            timestamp=datetime.utcnow().isoformat() + "Z",
-        )
+@app.get("/ready")
+async def readiness():
+    """Require primary and fallback models: a degraded fallback is not ready."""
+    body = await health()
+    return JSONResponse(body.model_dump(), status_code=200 if body.status == "healthy" else 503)
 
 
 async def _parse_with_paddleocr_ollama(
@@ -176,7 +169,9 @@ async def _parse_with_paddleocr_ollama(
     ocr_start = time.time()
     try:
         # WORK-0005: CPU-bound OCR runs in a thread so /health stays responsive.
-        ocr_result = await asyncio.to_thread(ocr_service.extract_text, image)
+        ocr_result = await image_worker.run(ocr_service.extract_text, image)
+    except CapacityError:
+        raise
     except Exception as e:
         logger.error(f"OCR extraction failed: {e}")
         raise HTTPException(
@@ -192,7 +187,7 @@ async def _parse_with_paddleocr_ollama(
                 error="No text detected",
                 details="OCR could not detect any text in the image",
                 ocr_confidence=ocr_result.confidence,
-            ).dict(),
+            ).model_dump(),
         )
 
     # Stage 2: LLM structuring
@@ -212,20 +207,21 @@ async def _parse_with_paddleocr_ollama(
                 details=str(e),
                 ocr_text=ocr_result.full_text[:500],  # First 500 chars
                 ocr_confidence=ocr_result.confidence,
-            ).dict(),
+            ).model_dump(),
         )
     llm_time_ms = (time.time() - llm_start) * 1000
 
     total_time_ms = (time.time() - start_time) * 1000
 
     metadata = ProcessingMetadata(
+        backend="paddleocr_ollama", model=getattr(llm_service, "model", None),
         ocr_time_ms=ocr_time_ms,
         llm_time_ms=llm_time_ms,
         total_time_ms=total_time_ms,
         ocr_confidence=ocr_result.confidence,
     )
 
-    return ReceiptResponse(**receipt_data.dict(), processing_metadata=metadata)
+    return ReceiptResponse(**receipt_data.model_dump(), processing_metadata=metadata)
 
 
 async def _parse_with_gemini(
@@ -246,13 +242,14 @@ async def _parse_with_gemini(
     total_time_ms = (time.time() - start_time) * 1000
 
     metadata = ProcessingMetadata(
+        backend="gemini", model=getattr(gemini_service, "model", None),
         ocr_time_ms=0.0,
         llm_time_ms=total_time_ms,
         total_time_ms=total_time_ms,
         ocr_confidence=1.0,
     )
 
-    return ReceiptResponse(**receipt_data.dict(), processing_metadata=metadata)
+    return ReceiptResponse(**receipt_data.model_dump(), processing_metadata=metadata)
 
 
 async def _run_backends(image, extraction_options: ExtractionOptions, start_time: float, deadline: float):
@@ -266,10 +263,13 @@ async def _run_backends(image, extraction_options: ExtractionOptions, start_time
             elapsed = (time.time() - start_time) * 1000
             logger.info("Receipt parsed using the vision model")
             return ReceiptResponse(
-                **receipt.dict(),
+                **receipt.model_dump(),
                 processing_metadata=ProcessingMetadata(
+                    backend="vlm_ollama", model=getattr(vlm_service, "model", None),
                     ocr_time_ms=0.0, llm_time_ms=elapsed, total_time_ms=elapsed, ocr_confidence=1.0),
             )
+        except CapacityError:
+            raise
         except Exception as e:
             logger.warning(f"Vision model failed, falling back to PaddleOCR + Ollama: {type(e).__name__}: {str(e)[:200]}")
     if settings.parser_backend == "gemini" and gemini_service is not None:
@@ -277,13 +277,49 @@ async def _run_backends(image, extraction_options: ExtractionOptions, start_time
             response = await _parse_with_gemini(image, extraction_options, start_time, deadline)
             logger.info("Receipt parsed using Gemini backend")
             return response
+        except CapacityError:
+            raise
         except Exception as e:
             logger.warning(f"Gemini parsing failed, falling back to PaddleOCR + Ollama: {e}")
     return await _parse_with_paddleocr_ollama(image, extraction_options, start_time, deadline)
 
 
+ALLOWED_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/tiff"}
+
+
+async def _parse_upload(file, options, deadline):
+    started = time.time()
+    async with asyncio.timeout_at(deadline):
+        if file.content_type not in ALLOWED_TYPES:
+            raise HTTPException(400, f"Unsupported file type '{file.content_type}'")
+        chunks, size = [], 0
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > settings.max_upload_bytes:
+                raise HTTPException(413, "Image exceeds the upload byte limit")
+            chunks.append(chunk)
+        try:
+            image = await image_worker.run(load_image_from_bytes, b"".join(chunks))
+        except ImageTooLarge as exc:
+            raise HTTPException(413, str(exc)) from exc
+        except (CapacityError, asyncio.CancelledError):
+            raise
+        except Exception as exc:
+            raise HTTPException(400, f"Invalid image file: {exc}") from exc
+        # CPU jobs own the image until completion, including after cancellation.
+        return await _run_backends(image, options, started, deadline)
+
+
+def _deadline_error():
+    return JSONResponse(status_code=504, content=ParseError(
+        error="Parse deadline exceeded",
+        details=f"No result within {settings.parse_deadline_seconds:g} seconds",
+    ).model_dump())
+
+
 @app.post("/parse")
 async def parse_receipt(
+    request: Request,
     file: UploadFile = File(...),
     items: bool = Query(True, description="Extract line items"),
     date: bool = Query(True, description="Extract transaction date"),
@@ -335,76 +371,26 @@ async def parse_receipt(
         cashier=cashier,
     )
 
-    start_time = time.time()
-
+    deadline = request.state.parse_deadline
     try:
-        logger.info("Received /parse request")
-        # Validate file type
-        allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/tiff"}
-        if file.content_type not in allowed_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type '{file.content_type}'. Accepted: JPEG, PNG, GIF, WebP, BMP, TIFF",
-            )
-
-        # Read image bytes
-        image_bytes = await file.read()
-
-        # Load image
+        response = await _parse_upload(file, extraction_options, deadline)
+    except TimeoutError:
+        return _deadline_error()
+    except CapacityError as exc:
+        raise HTTPException(503, str(exc), headers={"Retry-After": "2"}) from exc
+    if isinstance(response, ReceiptResponse) and settings.save_output:
+        from uuid import uuid4
+        output_path = Path(settings.output_dir) / f"receipt_{uuid4().hex}.json"
         try:
-            image = load_image_from_bytes(image_bytes)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
-
-        # WORK-0005: one deadline for the whole parse, Gemini plus the local fallback.
-        deadline = time.monotonic() + settings.parse_deadline_seconds
-        try:
-            response = await asyncio.wait_for(
-                _run_backends(image, extraction_options, start_time, deadline),
-                timeout=settings.parse_deadline_seconds,
-            )
-        except (asyncio.TimeoutError, TimeoutError):
-            logger.warning(f"Parse deadline of {settings.parse_deadline_seconds:.0f}s exceeded")
-            return JSONResponse(
-                status_code=504,
-                content=ParseError(
-                    error="Parse deadline exceeded",
-                    details=f"No result within {settings.parse_deadline_seconds:.0f} seconds",
-                ).dict(),
-            )
-        if not isinstance(response, ReceiptResponse):
-            # Error response (JSONResponse) from the fallback pipeline
-            return response
-
-        total_time_ms = (time.time() - start_time) * 1000
-
-        # WORK-0002: keep a copy only when debugging locally (SAVE_OUTPUT=true).
-        if settings.save_output:
-            try:
-                output_path = Path(settings.output_dir) / f"receipt_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-                with open(output_path, "w") as f:
-                    json.dump(response.dict(), f, indent=2)
-                logger.info(f"Saved result to {output_path}")
-            except Exception as e:
-                logger.warning(f"Failed to save output: {e}")
-
-        logger.info(
-            f"Receipt parsed successfully in {total_time_ms:.0f}ms "
-            f"(OCR: {response.processing_metadata.ocr_time_ms:.0f}ms, "
-            f"LLM: {response.processing_metadata.llm_time_ms:.0f}ms)"
-        )
-
-        return response
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+            output_path.write_text(response.model_dump_json(indent=2))
+        except OSError as exc:
+            logger.warning("Could not save debug output: %s", exc)
+    return response
 
 
 @app.post("/parse-batch", response_model=BatchResponse)
 async def parse_batch(
+    request: Request,
     files: List[UploadFile] = File(...),
     items: bool = Query(True, description="Extract line items"),
     date: bool = Query(True, description="Extract transaction date"),
@@ -444,126 +430,40 @@ async def parse_batch(
         cashier=cashier,
     )
 
-    start_time = time.time()
-
-    # Validate batch size
+    started = time.monotonic()
     if len(files) > settings.batch_max_size:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Batch size exceeds maximum ({settings.batch_max_size})",
-        )
-
-    logger.info(f"Processing batch of {len(files)} receipts")
-
+        raise HTTPException(400, f"Batch size exceeds maximum ({settings.batch_max_size})")
     results = []
-    successful = 0
-    failed = 0
-
-    allowed_types = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp", "image/tiff"}
-
-    # Process each file
+    batch_deadline = request.state.parse_deadline
     for file in files:
+        if time.monotonic() >= batch_deadline:
+            results.append(BatchResult(filename=file.filename or "upload", success=False,
+                                       error="Batch deadline exceeded; receipt not processed"))
+            continue
+        deadline = min(batch_deadline, time.monotonic() + settings.parse_deadline_seconds)
         try:
-            # Validate file type
-            if file.content_type not in allowed_types:
-                results.append(
-                    BatchResult(
-                        filename=file.filename,
-                        success=False,
-                        error=f"Unsupported file type '{file.content_type}'",
-                    )
-                )
-                failed += 1
-                continue
-
-            # Read image bytes
-            image_bytes = await file.read()
-
-            # Load image
-            try:
-                image = load_image_from_bytes(image_bytes)
-            except Exception as e:
-                results.append(
-                    BatchResult(
-                        filename=file.filename,
-                        success=False,
-                        error=f"Invalid image: {str(e)}",
-                    )
-                )
-                failed += 1
-                continue
-
-            # OCR extraction
-            try:
-                ocr_result = await asyncio.to_thread(ocr_service.extract_text, image)
-            except Exception as e:
-                results.append(
-                    BatchResult(
-                        filename=file.filename,
-                        success=False,
-                        error=f"OCR failed: {str(e)}",
-                    )
-                )
-                failed += 1
-                continue
-
-            # Check for text
-            if not ocr_result.full_text.strip():
-                results.append(
-                    BatchResult(
-                        filename=file.filename,
-                        success=False,
-                        error="No text detected",
-                    )
-                )
-                failed += 1
-                continue
-
-            # LLM parsing
-            try:
-                receipt_data = await llm_service.parse_receipt(
-                    ocr_result.full_text, extraction_options=extraction_options
-                )
-                results.append(
-                    BatchResult(
-                        filename=file.filename, success=True, data=receipt_data
-                    )
-                )
-                successful += 1
-            except Exception as e:
-                results.append(
-                    BatchResult(
-                        filename=file.filename,
-                        success=False,
-                        error=f"LLM parsing failed: {str(e)}",
-                    )
-                )
-                failed += 1
-
-        except Exception as e:
-            logger.error(f"Error processing {file.filename}: {e}")
-            results.append(
-                BatchResult(
-                    filename=file.filename, success=False, error=f"Error: {str(e)}"
-                )
-            )
-            failed += 1
-
-    # Calculate total time
-    processing_time_ms = (time.time() - start_time) * 1000
-
-    logger.info(
-        f"Batch processing completed in {processing_time_ms:.0f}ms "
-        f"({successful} successful, {failed} failed)"
-    )
-
-    return BatchResponse(
-        results=results,
-        total=len(files),
-        successful=successful,
-        failed=failed,
-        processing_time_ms=processing_time_ms,
-    )
+            response = await _parse_upload(file, extraction_options, deadline)
+            if isinstance(response, JSONResponse):
+                error = json.loads(response.body).get("error", "Extraction failed")
+                results.append(BatchResult(filename=file.filename or "upload", success=False, error=error))
+            else:
+                results.append(BatchResult(filename=file.filename or "upload", success=True,
+                    data=ReceiptData.model_validate(response.model_dump())))
+        except TimeoutError:
+            results.append(BatchResult(filename=file.filename or "upload", success=False,
+                                       error="Parse deadline exceeded"))
+        except HTTPException as exc:
+            results.append(BatchResult(filename=file.filename or "upload", success=False, error=str(exc.detail)))
+        except CapacityError as exc:
+            results.append(BatchResult(filename=file.filename or "upload", success=False, error=str(exc)))
+        except Exception:
+            logger.exception("Batch receipt failed")
+            results.append(BatchResult(filename=file.filename or "upload", success=False,
+                                       error="Receipt extraction failed"))
+    successful = sum(result.success for result in results)
+    return BatchResponse(results=results, total=len(results), successful=successful,
+                         failed=len(results) - successful,
+                         processing_time_ms=(time.monotonic() - started) * 1000)
 
 
 if __name__ == "__main__":
