@@ -74,4 +74,3 @@ def generic_prompt(options: ExtractionOptions) -> str:
         "Copy amounts as plain numbers without currency symbols. Use null for anything not printed. "
         "Return only the JSON."
     )
-

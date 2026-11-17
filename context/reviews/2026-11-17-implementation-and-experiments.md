@@ -96,7 +96,7 @@ Then run `docker compose -f compose.yml -f /path/to/rollback.yml up -d --no-deps
 Owner explicitly requested publishing and merging the parser source after the
 expense-api WORK-0087 rollout. Fresh publication checks passed: 85 unit tests,
 four live production integration tests, context validation and whitespace checks.
-All 15 local `src/**/*.py` files match the running `56d70051e9b6` image by SHA-256.
+All 15 local `src/**/*.py` files matched the running `56d70051e9b6` image by SHA-256 before publication. The staged whitespace check then caught one extra terminal blank line in `src/extraction.py`; only that blank line was removed. After this formatting correction, all deployed/local Python sources match when ignoring terminal whitespace.
 The service is healthy; publication changes no parser runtime configuration or
 model and requires no redeployment. Earlier statements about uncommitted source
 record the state at their original verification time. WORK-0035 remains proposed.
