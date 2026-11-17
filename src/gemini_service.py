@@ -19,6 +19,9 @@ from PIL import Image
 
 from src.models import ReceiptData, ExtractionOptions
 from src.config import settings
+from src.extraction import generic_prompt
+from src.vlm_service import to_receipt
+from src.workers import image_worker
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +75,14 @@ class GeminiReceiptService:
         if extraction_options is None:
             extraction_options = ExtractionOptions()
 
-        image_bytes = self._image_to_bytes(image)
+        primary_deadline = min(
+            time.monotonic() + self.timeout_seconds * max_retries + 3,
+            deadline - reserve_seconds if deadline is not None else float("inf"),
+        )
+        if primary_deadline - time.monotonic() < 1:
+            raise RuntimeError("Gemini parsing skipped: parse deadline too close")
+        async with asyncio.timeout_at(primary_deadline):
+            image_bytes = await image_worker.run(self._image_to_bytes, image)
         prompt = self._build_prompt(extraction_options)
 
         last_error: Exception | None = None
@@ -86,7 +96,7 @@ class GeminiReceiptService:
                     break
             try:
                 response_text = await asyncio.wait_for(
-                    asyncio.to_thread(self._call_gemini, prompt, image_bytes), timeout=budget
+                    self._call_gemini(prompt, image_bytes), timeout=budget
                 )
                 return self._parse_response(response_text)
             except Exception as e:
@@ -117,9 +127,9 @@ class GeminiReceiptService:
             "model": self.model,
         }
 
-    def _call_gemini(self, prompt: str, image_bytes: bytes) -> str:
+    async def _call_gemini(self, prompt: str, image_bytes: bytes) -> str:
         try:
-            response = self.client.models.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model=self.model,
                 contents=[
                     types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
@@ -131,6 +141,8 @@ class GeminiReceiptService:
                 ),
             )
 
+            if response.candidates and str(response.candidates[0].finish_reason).split(".")[-1] == "MAX_TOKENS":
+                raise ValueError("Gemini extraction incomplete: output token limit reached")
             text = response.text
             if not text:
                 raise RuntimeError("Empty response from Gemini")
@@ -147,7 +159,7 @@ class GeminiReceiptService:
             data = self._extract_json_from_text(response)
 
         try:
-            return ReceiptData(**data)
+            return to_receipt(data)
         except Exception as e:
             logger.error(f"Response validation failed: {e}")
             logger.debug(f"Raw response: {response}")
@@ -179,71 +191,4 @@ class GeminiReceiptService:
         if options is None:
             options = ExtractionOptions()
 
-        json_parts = ['"merchant_name":"store name"']
-        rules = ["- merchant_name: Business name from receipt header (first few lines)"]
-
-        if options.merchant_address:
-            json_parts.append('"merchant_address":"address or null"')
-            rules.append("- merchant_address: Full address if shown, or null")
-
-        if options.merchant_phone:
-            json_parts.append('"merchant_phone":"phone or null"')
-            rules.append("- merchant_phone: Phone number if shown, or null")
-
-        if options.date:
-            json_parts.append('"date":"YYYY-MM-DD"')
-            rules.append("- date: Convert to YYYY-MM-DD format. Use null if no date is explicitly shown")
-
-        if options.time:
-            json_parts.append('"time":"HH:MM"')
-            rules.append("- time: Convert to HH:MM 24h format. Use null if no time is explicitly shown")
-
-        if options.items:
-            json_parts.append('"items":[{"name":"product","quantity":1,"total_price":0.00}]')
-            rules.append("- items: Up to 10 products with name and total_price")
-
-        if options.subtotal:
-            json_parts.append('"subtotal":0.00')
-            rules.append("- subtotal: Pre-tax amount, or null if not shown")
-
-        if options.tax:
-            json_parts.append('"tax":0.00')
-            rules.append("- tax: Tax/VAT amount, or null if not shown")
-
-        if options.tip:
-            json_parts.append('"tip":0.00')
-            rules.append("- tip: Tip/gratuity amount, or null if not shown")
-
-        if options.discount:
-            json_parts.append('"discount":0.00')
-            rules.append("- discount: Discount amount, or null if not shown")
-
-        json_parts.append('"total":0.00')
-        rules.append("- total: IMPORTANT - This is the final amount the customer pays. Look for the largest total near the bottom.")
-
-        if options.payment_method:
-            json_parts.append('"payment_method":"cash/card/etc"')
-            rules.append("- payment_method: Payment type if shown, or null")
-
-        if options.receipt_number:
-            json_parts.append('"receipt_number":"number or null"')
-            rules.append("- receipt_number: Transaction/receipt number if shown, or null")
-
-        if options.cashier:
-            json_parts.append('"cashier":"name or null"')
-            rules.append("- cashier: Cashier name if shown, or null")
-
-        json_structure = "{" + ",".join(json_parts) + "}"
-        rules_text = "\n".join(rules)
-
-        return f"""You are a receipt parser. Extract data from this receipt image and return JSON.
-
-Return this JSON structure:
-{json_structure}
-
-Extraction rules:
-{rules_text}
-
-IMPORTANT: Only extract information that is actually visible in the image. Use null for missing values. Do not fabricate values.
-
-JSON:"""
+        return generic_prompt(options) + " Extract every purchased line item when requested."

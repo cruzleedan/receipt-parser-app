@@ -11,13 +11,16 @@ import json
 import os
 import re
 import sys
+import tempfile
+from threading import Lock
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-DATA = Path(sys.argv[1])
+DATA = Path(sys.argv[1]) if __name__ == "__main__" else Path(".")
 LABELS = DATA / "labels.json"
 ID_RE = re.compile(r"^r\d{3}$")
+LABEL_LOCK = Lock()
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -117,6 +120,25 @@ def prefill(rid):
     return {k: (c.most_common(1)[0][0] if c else "") for k, c in votes.items()}
 
 
+def save_label(rid, clean):
+    """One transaction, including the read, for all threaded handlers."""
+    with LABEL_LOCK:
+        all_labels = labels()
+        all_labels[rid] = clean
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=LABELS.parent,
+                                             prefix="labels-", suffix=".tmp", delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump(all_labels, stream, indent=1)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, LABELS)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+
+
 class Handler(BaseHTTPRequestHandler):
     def send(self, code, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else body.encode()
@@ -150,11 +172,10 @@ class Handler(BaseHTTPRequestHandler):
             clean["unreadable"] = bool(lab.get("unreadable"))
         except Exception:
             return self.send(400, "bad label", "text/plain")
-        all_labels = labels()
-        all_labels[rid] = clean
-        tmp = LABELS.with_suffix(".tmp")
-        tmp.write_text(json.dumps(all_labels, indent=1))
-        os.replace(tmp, LABELS)
+        try:
+            save_label(rid, clean)
+        except OSError:
+            return self.send(500, "label could not be saved", "text/plain")
         self.send(200, "{}")
 
     def log_message(self, *args):

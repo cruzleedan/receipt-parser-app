@@ -2,9 +2,17 @@
 Pydantic models for receipt parsing API.
 """
 
-from typing import Dict, List, Optional
-from pydantic import BaseModel, Field
-from datetime import datetime
+from typing import Annotated, Dict, List, Optional
+from pydantic import BaseModel, Field, BeforeValidator, field_validator
+
+
+def reject_boolean_money(value):
+    if isinstance(value, bool):
+        raise ValueError("Boolean is not a monetary amount")
+    return value
+
+
+Money = Annotated[float, BeforeValidator(reject_boolean_money), Field(allow_inf_nan=False)]
 
 
 class ExtractionOptions(BaseModel):
@@ -29,8 +37,8 @@ class ReceiptItem(BaseModel):
 
     name: str = Field(..., description="Item name or description")
     quantity: Optional[int] = Field(default=1, ge=1, description="Quantity purchased")
-    unit_price: Optional[float] = Field(default=None, description="Price per unit")
-    total_price: float = Field(..., description="Total price for this line item")
+    unit_price: Optional[Money] = Field(default=None, description="Price per unit")
+    total_price: Money = Field(..., description="Total price for this line item")
 
     def __init__(self, **data):
         # Handle null quantity by defaulting to 1
@@ -51,12 +59,13 @@ class ReceiptData(BaseModel):
 
     items: List[ReceiptItem] = Field(default_factory=list, description="List of purchased items")
 
-    subtotal: Optional[float] = Field(default=None, description="Subtotal before tax")
-    tax: Optional[float] = Field(default=None, description="Tax amount")
-    tip: Optional[float] = Field(default=None, description="Tip amount")
-    discount: Optional[float] = Field(default=None, description="Discount amount")
-    total: float = Field(..., description="Total amount paid")
+    subtotal: Optional[Money] = Field(default=None, description="Subtotal before tax")
+    tax: Optional[Money] = Field(default=None, description="Tax amount")
+    tip: Optional[Money] = Field(default=None, description="Tip amount")
+    discount: Optional[Money] = Field(default=None, description="Discount amount")
+    total: Money = Field(..., description="Total amount paid")
     currency: Optional[str] = Field(default=None, description="ISO 4217 code of the amounts when printed (WORK-0014)")
+    extraction_warnings: List[str] = Field(default_factory=list)
     field_confidence: Optional[Dict[str, Optional[float]]] = Field(
         default=None, description="WORK-0016: lowest digit probability per field (date, total); null without the vision model")
 
@@ -66,9 +75,18 @@ class ReceiptData(BaseModel):
     cashier: Optional[str] = Field(default=None, description="Cashier name if visible")
 
 
+    @field_validator("currency", mode="before")
+    @classmethod
+    def normalize_currency(cls, value):
+        from src.currency import normalise_currency
+        return normalise_currency(value)
+
+
 class ProcessingMetadata(BaseModel):
     """Metadata about the processing pipeline."""
 
+    backend: Optional[str] = None
+    model: Optional[str] = None
     ocr_time_ms: float = Field(..., description="OCR processing time in milliseconds")
     llm_time_ms: float = Field(..., description="LLM processing time in milliseconds")
     total_time_ms: float = Field(..., description="Total processing time in milliseconds")
@@ -85,12 +103,13 @@ class ReceiptResponse(BaseModel):
     date: Optional[str] = None
     time: Optional[str] = None
     items: List[ReceiptItem]
-    subtotal: Optional[float] = None
-    tax: Optional[float] = None
-    tip: Optional[float] = None
-    discount: Optional[float] = None
-    total: float
+    subtotal: Optional[Money] = None
+    tax: Optional[Money] = None
+    tip: Optional[Money] = None
+    discount: Optional[Money] = None
+    total: Money
     currency: Optional[str] = None
+    extraction_warnings: List[str] = Field(default_factory=list)
     field_confidence: Optional[Dict[str, Optional[float]]] = None
     payment_method: Optional[str] = None
     card_last_4: Optional[str] = None

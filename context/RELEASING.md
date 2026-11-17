@@ -35,6 +35,9 @@ Pulled from the work item itself — every box in its **Definition of done**
 checklist must be checked before status moves to `shipped`. There is no
 separate DoD to maintain; if the checklist is wrong, fix it on the work item.
 
+Local tests/builds/deployments are the chosen verification workflow for cost.
+No hosted parser workflow is configured; absent GitHub checks are expected.
+
 ## Before marking a context/work/ item "shipped"
 
 - [ ] All Definition of done boxes checked

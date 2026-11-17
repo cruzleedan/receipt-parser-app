@@ -21,3 +21,4 @@ Use `(cross-project)` for the project field when the issue isn't specific to
 one project's files.
 
 ## Entries
+2026-11-17 | receipt-parser-app | context/RELEASING.md | Release checklist required scripts/verify-context.sh, but the repository had no such script. Added a dependency-free work-item validator while implementing WORK-0017–0032.

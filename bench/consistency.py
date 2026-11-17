@@ -10,6 +10,7 @@ Also writes disagreements.json next to the first run: receipts where runs disagr
 
 import difflib
 import json
+import math
 import re
 import statistics
 import sys
@@ -18,15 +19,22 @@ from pathlib import Path
 
 
 def num(v):
+    if isinstance(v, bool):
+        return None
     if isinstance(v, (int, float)):
-        return round(float(v), 2)
-    if isinstance(v, str):
-        d = re.sub(r"[^\d.]", "", v.replace(",", ""))
+        value = float(v)
+    elif isinstance(v, str):
+        text = v.strip().replace(",", "").replace("−", "-")
+        digits = re.sub(r"[^\d.+-]", "", text)
         try:
-            return round(float(d), 2) if d else None
+            value = float(digits)
         except ValueError:
             return None
-    return None
+        if text.startswith("(") and text.endswith(")"):
+            value = -abs(value)
+    else:
+        return None
+    return round(value, 2) if math.isfinite(value) else None
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

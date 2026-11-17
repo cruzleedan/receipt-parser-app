@@ -54,6 +54,15 @@ receipt-parser-app/
 
 ---
 
+## Verification policy
+
+The owner chooses local builds, tests and deployments to avoid hosted CI costs
+(confirmed 2026-11-17). No hosted workflow is configured in this repository;
+missing GitHub checks are expected. Run the local unit/integration/context checks
+below and record evidence. Do not add paid automation or change Actions settings
+without an explicit request. expense-api has its own intentionally disabled
+Actions configuration. Delegate all Flutter work to flutter-dev by mailbox.
+
 ## Common Commands
 
 ```bash

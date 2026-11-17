@@ -370,3 +370,59 @@ Supported MIME types from expense-api: `image/jpeg`, `image/png`, `image/gif`, `
 ## License
 
 See LICENSE file for details.
+
+### Capacity, limits and readiness (WORK-0017–0031)
+
+`/parse` and `/parse-batch` share backend selection, fallback order, image validation
+and extraction options. One request is admitted at a time by default; additional
+requests receive **503** with `Retry-After: 2`. CPU image/OCR work has one bounded
+worker. A timed-out job keeps that worker occupied until it finishes, preventing
+successive timeouts from creating a backlog.
+
+`/health` provides HTTP 200 diagnostics. **`/ready` returns 503 unless OCR and all
+configured primary/fallback model dependencies are ready**; Docker uses `/ready`.
+Readiness probes run concurrently and do not block the event loop. The unused
+Gemini backend checks configuration without making billable inference calls. Models must
+match the configured tag; another tag in the same family does not satisfy readiness.
+
+Defaults (overridable through environment variables):
+
+| Setting | Default | Behavior |
+|---|---|---|
+| `MAX_ACTIVE_PARSES` | 1 | Admission limit per API process; run one API worker for the shared OCR engine. |
+| `MAX_UPLOAD_BYTES` | 10 MiB | Per image; checked before and during reads. |
+| `MAX_REQUEST_BYTES` | 105 MiB | Absolute multipart request ceiling, also bounded by batch size and per-file budget. |
+| `MAX_IMAGE_PIXELS` | 24,000,000 | Checked before eager decoding. |
+| `INGRESS_TIMEOUT_SECONDS` | 15 | Upload body deadline, including multipart ingress. |
+| `PARSE_DEADLINE_SECONDS` | 70 | Starts at ingress, includes image preparation and inference. |
+| `BATCH_DEADLINE_SECONDS` | 70 | Whole sequential batch budget; completed results are preserved, remaining files marked failed. |
+| `HEALTH_TIMEOUT_SECONDS` | 6 | Budget per concurrently executed dependency probe. |
+| `OLLAMA_NUM_CTX` | 12,288 | Text fallback context. Input is never silently truncated. |
+| `OLLAMA_NUM_PREDICT` | 2,048 | Text fallback output limit. |
+| `OLLAMA_NUM_GPU` | unset | Let Ollama place the text model automatically; independent of CPU OCR. |
+| `OCR_DEVICE` | derived from `OCR_USE_GPU` | Explicit Paddle device, e.g. `cpu` or `gpu:0`. |
+| `VLM_NUM_CTX` / `VLM_NUM_PREDICT` | 8,192 / 2,048 | Vision context and output limits. |
+
+Too-large input returns **413**; slow upload returns **408**; parse budget exhaustion
+returns **504**. Batch errors are reported per file. Long OCR text that cannot fit
+its conservative UTF-8 byte/token upper bound returns a handled extraction failure
+instead of losing its footer. All backends reject token-truncated JSON, boolean and
+non-finite money. Zero and refund amounts are supported. Currency and date
+normalization are shared. `extraction_warnings` reports discarded unreadable line
+items; callers should still confirm extracted data before saving.
+
+For a field-only request use
+`/parse?items=false&time=false&subtotal=false&tax=false`. This profile is optional;
+normal requests continue to ask for line items. Local geometry/profile research
+is tracked in `context/work/0032-low-cost-performance-accuracy-experiments.md`.
+Raw benchmark answers stay outside the repository.
+Compose explicitly defaults `OLLAMA_NUM_GPU=0` to preserve CPU text inference: the
+corrected pipeline's GPU trial used about 9.5 GiB reported GPU allocation for only
+a modest latency improvement on the two fixtures. Set this independently of OCR
+when an isolated benchmark justifies a different placement.
+
+`processing_metadata.backend` and `.model` identify the backend that actually
+answered (`vlm_ollama`, `paddleocr_ollama` or `gemini`), including fallback.
+PaddleOCR model assets persist in the `parser-ocr-models` volume across rebuilds;
+new installations still need the initial model download. This volume contains
+model assets, not receipt images or extraction results.
