@@ -119,3 +119,16 @@ def test_fatal_ingress_or_process_failure_cannot_be_rescued_by_same_request_fall
         assert result['backend'] is None
         assert result['seconds'] == 3
         assert result['fatal_stage_failure']
+
+
+
+def test_resume_refuses_changed_inputs_labels_models_profiles_settings_or_source():
+    from bench.fallback_schedule import verify_resume
+    import copy
+    frozen={key:{'value':'original'} for key in
+            ['input_hashes','selected','truth_hashes','profiles','settings','source_hashes','models']}
+    verify_resume(frozen,copy.deepcopy(frozen))
+    for key in frozen:
+        changed=copy.deepcopy(frozen);changed[key]={'value':'changed'}
+        with pytest.raises(ValueError,match=key):
+            verify_resume(frozen,changed)

@@ -138,12 +138,13 @@ primary; cache/load/order effects remain. The one early primary error fell back
 successfully at every cap. No memory kill occurred during this 12-call subset.
 No actual primary-timeout rescue was observed in either population.
 
-The nine new regression cases cover early failure, cutoff/ceiling boundaries,
+The ten new regression cases cover early failure, cutoff/ceiling boundaries,
 fixed-population missing rows and primary wins preempted by earlier cutoffs,
 strict versus scale-tolerant totals, actual cancellation/profile preservation
 for full and explicitly item-free requests, and recording confirmed OOM failures
 once. They also prevent treating fatal ingress/process failures as same-request
-fallback opportunities. The full local unit suite passed **94 tests**, with **four production
+fallback opportunities and refuse resumed captures with changed input/label
+hashes, profiles, model catalogs, settings or source. The full local unit suite passed **95 tests**, with **four production
 integration tests passing separately**. Production and model
 configuration remain unchanged; this spike delivers measurement tools, evidence
 and the no-promotion decision rather than a runtime release.

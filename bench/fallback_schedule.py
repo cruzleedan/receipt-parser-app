@@ -96,6 +96,12 @@ def summary(records, truths, cutoffs=(60, 50, 45, 40)):
     return output
 
 
+def verify_resume(saved, candidate):
+    for key in ('input_hashes','selected','truth_hashes','profiles','settings','source_hashes','models'):
+        if saved.get(key) != candidate.get(key):
+            raise ValueError(f'resume provenance changed: {key}')
+
+
 def record_oom(out, state, container):
     """Record an externally confirmed failed stage without losing the fixed denominator."""
     if not state.get('OOMKilled') or state.get('Running'):
@@ -272,8 +278,7 @@ async def measure(args):
     results = {}
     if args.resume:
         saved = json.loads((out/'metadata.json').read_text())
-        if saved['input_hashes'] != images or saved['selected'] != selected:
-            raise ValueError('resume input population changed')
+        verify_resume(saved, metadata)
         for line in (out/'stages.jsonl').read_text().splitlines():
             row = json.loads(line)
             stages = results.setdefault(row['id'], {})
