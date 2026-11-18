@@ -10,5 +10,5 @@ NETWORK=${2:-receipt-parser-app_default}
 IMAGE=${IMAGE:-receipt-parser-app-parser}
 docker run --rm --network "$NETWORK" \
   -e PARSER_URL="$URL" -e EXPECTED_BACKEND="${EXPECTED_BACKEND:-vlm_ollama}" -e SAMPLE_DIR=/samples \
-  -v "$PWD/tests:/app/tests:ro" -v "$PWD/pytest.ini:/app/pytest.ini:ro" -v "$PWD/receipts:/samples:ro" \
+  -v "$PWD/bench:/app/bench:ro" -v "$PWD/tests:/app/tests:ro" -v "$PWD/pytest.ini:/app/pytest.ini:ro" -v "$PWD/receipts:/samples:ro" \
   --entrypoint python "$IMAGE" -m pytest -q -p no:cacheprovider -m integration

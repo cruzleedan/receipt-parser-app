@@ -61,7 +61,8 @@ The owner chooses local builds, tests and deployments to avoid hosted CI costs
 missing GitHub checks are expected. Run the local unit/integration/context checks
 below and record evidence. Do not add paid automation or change Actions settings
 without an explicit request. expense-api has its own intentionally disabled
-Actions configuration. Delegate all Flutter work to flutter-dev by mailbox.
+Actions configuration. Delegate all Flutter work to flutter-dev by mailbox. When the owner asks "what's
+next", report this agent's remaining work; do not substitute Flutter's task queue.
 
 ## Common Commands
 
@@ -76,7 +77,7 @@ docker logs -f receipt-parser-app
 docker compose -f compose.yml up -d --build
 
 # Unit tests (stubbed backends), in the image
-docker run --rm -v "$PWD/tests:/app/tests:ro" -v "$PWD/pytest.ini:/app/pytest.ini:ro" --entrypoint python receipt-parser-app-parser -m pytest -q
+docker run --rm -v "$PWD/bench:/app/bench:ro" -v "$PWD/tests:/app/tests:ro" -v "$PWD/pytest.ini:/app/pytest.ini:ro" --entrypoint python receipt-parser-app-parser -m pytest -q
 
 # Integration check against a running parser and its real model (WORK-0012):
 # after every deploy, and before one against a candidate container on the same network
